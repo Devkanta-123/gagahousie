@@ -1,0 +1,12 @@
+{
+  "name": "gaga-housie-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gaga Housie Project with Next.js Admin Panel",
+  "scripts": {
+    "dev": "npm --prefix admin run dev",
+    "build": "npm --prefix admin run build",
+    "start": "npm --prefix admin run start",
+    "lint": "npm --prefix admin run lint"
+  }
+}
