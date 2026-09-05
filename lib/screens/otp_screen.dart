@@ -25,16 +25,16 @@ class _OTPScreenState extends State<OTPScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0E8),
+      backgroundColor: AppColors.background,
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        color: const Color(0xFFF5F0E8),
+        color: AppColors.background,
         child: SafeArea(
           child: SingleChildScrollView(
             child: Container(
               width: double.infinity,
-              color: const Color(0xFFF5F0E8),
+              color: AppColors.background,
               child: Padding(
                 padding: const EdgeInsets.all(32.0),
                 child: Column(

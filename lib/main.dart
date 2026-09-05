@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'utils/constants.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/otp_screen.dart';
@@ -21,9 +22,25 @@ class MyApp extends StatelessWidget {
         title: 'GaGa Housie',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
-          primaryColor: const Color(0xFF030B18),
-          scaffoldBackgroundColor: const Color(0xFF030B18),
+          primaryColor: AppColors.primaryGreen,
+          scaffoldBackgroundColor: AppColors.background,
           fontFamily: 'Poppins',
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: AppColors.primaryGreen,
+            primary: AppColors.primaryGreen,
+            surface: AppColors.cardWhite,
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: AppColors.background,
+            elevation: 0,
+            iconTheme: IconThemeData(color: AppColors.primaryGreen),
+            titleTextStyle: TextStyle(
+              color: AppColors.primaryGreen,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'Poppins',
+            ),
+          ),
         ),
         initialRoute: '/',
         routes: {

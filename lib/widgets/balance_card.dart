@@ -58,27 +58,33 @@ class BalanceCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      AppStrings.balance,
-                      style: TextStyle(
-                        color: AppColors.background,
-                        fontSize: AppDimens.textMedium,
-                        letterSpacing: 1,
-                        fontWeight: FontWeight.w600,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        AppStrings.balance,
+                        style: TextStyle(
+                          color: AppColors.background,
+                          fontSize: AppDimens.textMedium,
+                          letterSpacing: 1,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    Text(
-                      '₹${balance.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        color: AppColors.background,
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '₹${balance.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: AppColors.background,
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 Container(
                   padding: const EdgeInsets.all(AppDimens.paddingSmall + 4),

@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
 import '../screens/ticket_purchase_page.dart';
+import '../utils/constants.dart';
 
 class TicketSelectionPage extends StatefulWidget {
   final Map<String, String> ticket;
@@ -217,7 +218,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0E8),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: Text(
           widget.ticket['ticket']!,
@@ -226,7 +227,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: const Color(0xFFF5F0E8),
+        backgroundColor: AppColors.background,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Color(0xFF2C3E50)),
@@ -234,7 +235,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
         ),
       ),
       body: Container(
-        color: const Color(0xFFF5F0E8),
+        color: AppColors.background,
         child: Column(
           children: [
             // Selection Info Banner
@@ -860,7 +861,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF5F0E8),
+        color: Colors.white,
         border: Border(
           top: BorderSide(
             color: const Color(0xFF00B894).withOpacity(0.3),

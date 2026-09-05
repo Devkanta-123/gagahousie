@@ -36,27 +36,47 @@ class _HomeScreenState extends State<HomeScreen> {
   }
   
   Widget _buildBottomNavigationBar() {
-    return BottomNavigationBar(
-      currentIndex: _currentIndex,
-      backgroundColor: AppColors.background,
-      selectedItemColor: AppColors.primaryGreen,
-      unselectedItemColor: AppColors.white,
-      type: BottomNavigationBarType.fixed,
-      elevation: 10,
-      showSelectedLabels: true,
-      showUnselectedLabels: true,
-      onTap: (index) {
-        setState(() {
-          _currentIndex = index;
-        });
-      },
-      items: const [
-        BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-        BottomNavigationBarItem(icon: Icon(Icons.confirmation_number), label: 'Tickets'),
-        BottomNavigationBarItem(icon: Icon(Icons.emoji_events), label: 'Results'),
-        BottomNavigationBarItem(icon: Icon(Icons.notifications), label: 'Notifications'),
-        BottomNavigationBarItem(icon: Icon(Icons.account_circle), label: 'Account'),
-      ],
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.pureWhite,
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryGreen.withOpacity(0.08),
+            blurRadius: 12,
+            offset: const Offset(0, -3),
+          ),
+        ],
+      ),
+      child: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        backgroundColor: AppColors.pureWhite,
+        selectedItemColor: AppColors.primaryGreen,
+        unselectedItemColor: const Color(0xFF8A9E96),
+        type: BottomNavigationBarType.fixed,
+        elevation: 0,
+        showSelectedLabels: true,
+        showUnselectedLabels: true,
+        selectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 11,
+        ),
+        unselectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 11,
+        ),
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Home'),
+          BottomNavigationBarItem(icon: Icon(Icons.confirmation_number_rounded), label: 'Tickets'),
+          BottomNavigationBarItem(icon: Icon(Icons.emoji_events_rounded), label: 'Results'),
+          BottomNavigationBarItem(icon: Icon(Icons.notifications_rounded), label: 'Alerts'),
+          BottomNavigationBarItem(icon: Icon(Icons.account_circle_rounded), label: 'Account'),
+        ],
+      ),
     );
   }
   

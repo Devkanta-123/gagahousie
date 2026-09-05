@@ -37,7 +37,7 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
     final bool hasSufficientBalance = walletBalance >= total;
     
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0E8),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text(
           'Purchase Ticket',
@@ -46,7 +46,7 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
             fontWeight: FontWeight.bold,
           ),
         ),
-        backgroundColor: const Color(0xFFF5F0E8),
+        backgroundColor: AppColors.background,
         elevation: 0,
         leading: widget.showBackButton
             ? IconButton(
@@ -56,7 +56,7 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
             : null,
       ),
       body: Container(
-        color: const Color(0xFFF5F0E8),
+        color: AppColors.background,
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -395,7 +395,7 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
       barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
-          backgroundColor: const Color(0xFFF5F0E8),
+          backgroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),

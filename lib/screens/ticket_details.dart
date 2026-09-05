@@ -21,10 +21,10 @@ class TicketDetailsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0E8),
+      backgroundColor: AppColors.background,
       body: SafeArea(
         child: Container(
-          color: const Color(0xFFF5F0E8),
+          color: AppColors.background,
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
