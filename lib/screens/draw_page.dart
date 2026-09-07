@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../utils/constants.dart';
+import '../widgets/gaga_app_header.dart';
 import 'dart:math';
 
 class DrawPage extends StatefulWidget {
@@ -91,44 +92,21 @@ class _DrawPageState extends State<DrawPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Container(
-          color: AppColors.background,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                /// HEADER
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: Color(0xFF00B894),
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      "Tambola Draw",
-                      style: TextStyle(
-                        color: Color(0xFF2C3E50),
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
+      body: Column(
+        children: [
+          /// GA GA APP HEADER
+          const GaGaAppHeader(
+            showBackButton: true,
+            subtitle: 'Live Tambola Draw',
+          ),
 
-                const SizedBox(height: 16),
-
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        /// TOP SECTION
-                        _buildTopSection(),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(AppDimens.paddingLarge),
+              child: Column(
+                children: [
+                  /// TOP SECTION
+                  _buildTopSection(),
 
                         const SizedBox(height: 20),
 
@@ -155,10 +133,7 @@ class _DrawPageState extends State<DrawPage> {
                 ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
+          );
   }
 
   Widget _buildTopSection() {

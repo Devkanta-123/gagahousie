@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import '../utils/constants.dart';
-import '../widgets/balance_card.dart'; // Import the balance card widget
+import '../widgets/gaga_app_header.dart';
 
 class HistoryTab extends StatelessWidget {
   const HistoryTab({super.key});
-  
+
   final List<Map<String, String>> history = const [
     {'game': 'Game #1225', 'ticket': 'Ticket #001', 'prize': '₹0', 'date': '11/09/2023', 'status': 'Lost', 'time': '07:00 PM'},
     {'game': 'Game #1226', 'ticket': 'Ticket #002', 'prize': '₹0', 'date': '12/09/2023', 'status': 'Lost', 'time': '08:00 PM'},
@@ -20,24 +20,51 @@ class HistoryTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Balance Card - Using Reusable Widget
-        const BalanceCard(
-          balance: 1000.00,
-          showRechargeButton: true,
+        // Reusable Branded Header
+        const GaGaAppHeader(
+          compact: true,
+          subtitle: 'Game Alerts & Play History',
         ),
-        
-        const Padding(
-          padding: EdgeInsets.all(AppDimens.paddingLarge),
-          child: Text(
-            'Game History',
-            style: TextStyle(
-              color: AppColors.white,
-              fontSize: AppDimens.textXXLarge,
-              fontWeight: FontWeight.bold,
-            ),
+
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppDimens.paddingLarge,
+            vertical: 8,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Recent Games',
+                style: TextStyle(
+                  color: AppColors.primaryGreen,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: AppColors.primaryGreen.withOpacity(0.18),
+                    width: 0.8,
+                  ),
+                ),
+                child: Text(
+                  '${history.length} Played',
+                  style: const TextStyle(
+                    color: AppColors.primaryGreen,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        
+
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.symmetric(horizontal: AppDimens.paddingLarge),
@@ -50,166 +77,146 @@ class HistoryTab extends StatelessWidget {
       ],
     );
   }
-  
-  Widget _buildHistoryCard(Map<String, String> history) {
-    final bool isWon = history['status'] == 'Won';
-    final bool isLost = history['status'] == 'Lost';
-    
+
+  Widget _buildHistoryCard(Map<String, String> item) {
+    final bool isWon = item['status'] == 'Won';
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppColors.glass,
-        borderRadius: BorderRadius.circular(AppDimens.borderRadiusMedium),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: isWon 
-              ? AppColors.primaryGreen.withOpacity(0.5) 
-              : Colors.white.withOpacity(0.1),
-          width: isWon ? 1.5 : 1,
+          color: isWon
+              ? AppColors.primaryGreen.withOpacity(0.35)
+              : AppColors.primaryGreen.withOpacity(0.12),
+          width: isWon ? 1.2 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: isWon 
-                ? AppColors.primaryGreen.withOpacity(0.1) 
-                : Colors.transparent,
+            color: isWon
+                ? AppColors.primaryGreen.withOpacity(0.06)
+                : Colors.black.withOpacity(0.02),
             blurRadius: 8,
-            spreadRadius: 2,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Status Icon
           Container(
-            width: 36,
-            height: 36,
-            margin: const EdgeInsets.only(top: 2),
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
-              color: isWon 
-                  ? AppColors.primaryGreen.withOpacity(0.2) 
-                  : Colors.red.withOpacity(0.2),
+              color: isWon
+                  ? AppColors.primaryGreen.withOpacity(0.1)
+                  : const Color(0xFFE74C3C).withOpacity(0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(
-              isWon ? Icons.emoji_events : Icons.close,
-              color: isWon ? AppColors.primaryGreen : Colors.red,
-              size: 18,
+              isWon ? Icons.emoji_events_rounded : Icons.close_rounded,
+              color: isWon ? AppColors.primaryGreen : const Color(0xFFE74C3C),
+              size: 20,
             ),
           ),
-          
-          const SizedBox(width: 10),
-          
+
+          const SizedBox(width: 12),
+
           // Content
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Row 1: Game Name and Prize
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Flexible(
-                      child: Text(
-                        history['game']!,
-                        style: const TextStyle(
-                          color: AppColors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      item['game']!,
+                      style: const TextStyle(
+                        color: Color(0xFF2C3E50),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14.5,
                       ),
                     ),
-                    const SizedBox(width: 8),
                     Text(
-                      history['prize']!,
+                      item['prize']!,
                       style: TextStyle(
-                        color: isWon ? AppColors.primaryGreen : Colors.white.withOpacity(0.4),
-                        fontWeight: isWon ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 13,
+                        color: isWon ? AppColors.primaryGreen : AppColors.textSecondary,
+                        fontWeight: isWon ? FontWeight.bold : FontWeight.w500,
+                        fontSize: 14,
                       ),
                     ),
                   ],
                 ),
-                
-                const SizedBox(height: 6),
-                
-                // Row 2: Ticket
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     Icon(
                       Icons.confirmation_number_outlined,
-                      color: Colors.white.withOpacity(0.3),
-                      size: 12,
+                      color: AppColors.textSecondary.withOpacity(0.8),
+                      size: 11,
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 3),
                     Text(
-                      history['ticket']!,
-                      style: TextStyle(
-                        color: AppColors.white.withOpacity(0.5),
+                      item['ticket']!,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
                         fontSize: 11,
                       ),
                     ),
                   ],
                 ),
-                
                 const SizedBox(height: 4),
-                
-                // Row 3: Date and Time in same row
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          Icons.calendar_today,
-                          color: Colors.white.withOpacity(0.3),
-                          size: 11,
+                          Icons.calendar_today_outlined,
+                          color: AppColors.textSecondary.withOpacity(0.8),
+                          size: 10,
                         ),
-                        const SizedBox(width: 4),
+                        const SizedBox(width: 3),
                         Text(
-                          history['date']!,
-                          style: TextStyle(
-                            color: AppColors.white.withOpacity(0.4),
-                            fontSize: 11,
+                          item['date']!,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.access_time_rounded,
+                          color: AppColors.textSecondary.withOpacity(0.8),
+                          size: 10,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          item['time']!,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 10.5,
                           ),
                         ),
                       ],
                     ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.access_time,
-                          color: Colors.white.withOpacity(0.3),
-                          size: 11,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          history['time']!,
-                          style: TextStyle(
-                            color: AppColors.white.withOpacity(0.4),
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Status Badge - Inline with date/time
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1.5),
                       decoration: BoxDecoration(
-                        color: isWon 
-                            ? AppColors.primaryGreen.withOpacity(0.2) 
-                            : Colors.red.withOpacity(0.15),
+                        color: isWon
+                            ? AppColors.primaryGreen.withOpacity(0.09)
+                            : const Color(0xFFE74C3C).withOpacity(0.09),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
-                        history['status']!,
+                        item['status']!,
                         style: TextStyle(
-                          color: isWon ? AppColors.primaryGreen : Colors.red,
-                          fontSize: 9,
+                          color: isWon ? AppColors.primaryGreen : const Color(0xFFE74C3C),
+                          fontSize: 9.5,
                           fontWeight: FontWeight.w600,
                         ),
                       ),

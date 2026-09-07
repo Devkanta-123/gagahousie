@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../utils/constants.dart';
+import '../widgets/gaga_app_header.dart';
 import 'dart:math';
 
 class TicketDetailsPage extends StatelessWidget {
@@ -22,58 +23,30 @@ class TicketDetailsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Container(
-          color: AppColors.background,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                /// HEADER
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: Color(0xFF00B894),
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      "Ticket Details",
-                      style: TextStyle(
-                        color: Color(0xFF2C3E50),
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        /// MAIN TICKET CARD
-                        _buildMainTicketCard(),
-                        const SizedBox(height: 16),
-                        
-                        /// ACTIVE TICKETS SECTION
-                        _buildActiveTicketsSection(),
-                        const SizedBox(height: 16),
-                        
-                        /// ADDITIONAL INFO
-                        // _buildAdditionalInfo(),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+      body: Column(
+        children: [
+          /// GA GA APP HEADER - Full width consistent branded header
+          GaGaAppHeader(
+            showBackButton: true,
+            subtitle: '$ticketNumber • Ticket Details',
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(AppDimens.paddingLarge),
+              child: Column(
+                children: [
+                  /// MAIN TICKET CARD
+                  _buildMainTicketCard(),
+                  const SizedBox(height: 16),
+
+                  /// ACTIVE TICKETS SECTION
+                  _buildActiveTicketsSection(),
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

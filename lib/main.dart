@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
 import 'utils/constants.dart';
+import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/otp_screen.dart';
@@ -44,7 +45,9 @@ class MyApp extends StatelessWidget {
         ),
         initialRoute: '/',
         routes: {
-          '/': (context) => const LoginScreen(),
+          '/': (context) => const SplashScreen(),
+          '/splash': (context) => const SplashScreen(),
+          '/login': (context) => const LoginScreen(),
           '/register': (context) => const RegisterScreen(),
           '/otp': (context) => const OTPScreen(),
           '/home': (context) => const HomeScreen(),

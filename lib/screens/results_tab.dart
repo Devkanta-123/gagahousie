@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import '../utils/constants.dart';
-import '../widgets/balance_card.dart'; // Import the balance card widget
+import '../widgets/gaga_app_header.dart';
 
 class ResultsTab extends StatelessWidget {
   const ResultsTab({super.key});
-  
+
   final List<Map<String, String>> results = const [
     {'game': 'Game #1234', 'prize': '₹100', 'date': '20/09/2023', 'winner': 'Winner 1'},
     {'game': 'Game #1233', 'prize': '₹50', 'date': '19/09/2023', 'winner': 'Winner 2'},
@@ -22,24 +22,51 @@ class ResultsTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Balance Card - Using Reusable Widget
-        const BalanceCard(
-          balance: 1000.00,
-          showRechargeButton: true,
+        // Reusable Branded Header
+        const GaGaAppHeader(
+          compact: true,
+          subtitle: 'Draw Results & Recent Winners',
         ),
-        
-        const Padding(
-          padding: EdgeInsets.all(AppDimens.paddingLarge),
-          child: Text(
-            'Game Results',
-            style: TextStyle(
-              color: AppColors.white,
-              fontSize: AppDimens.textXXLarge,
-              fontWeight: FontWeight.bold,
-            ),
+
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppDimens.paddingLarge,
+            vertical: 8,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Past Games',
+                style: TextStyle(
+                  color: AppColors.primaryGreen,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: AppColors.primaryGreen.withOpacity(0.18),
+                    width: 0.8,
+                  ),
+                ),
+                child: Text(
+                  '${results.length} Completed',
+                  style: const TextStyle(
+                    color: AppColors.primaryGreen,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        
+
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.symmetric(horizontal: AppDimens.paddingLarge),
@@ -52,53 +79,78 @@ class ResultsTab extends StatelessWidget {
       ],
     );
   }
-  
+
   Widget _buildResultCard(Map<String, String> result) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: AppColors.glass,
-        borderRadius: BorderRadius.circular(AppDimens.borderRadiusMedium),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: AppColors.glassBorder,
-          width: 1,
+          color: AppColors.primaryGreen.withOpacity(0.18),
+          width: 1.1,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryGreen.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                result['game']!,
-                style: const TextStyle(
-                  color: AppColors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
+          Expanded(
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.emoji_events_rounded,
+                    color: AppColors.primaryGreen,
+                    size: 22,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Icon(
-                    Icons.emoji_events,
-                    color: AppColors.primaryGreen.withOpacity(0.6),
-                    size: 12,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        result['game']!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF2C3E50),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Winner: ${result['winner']}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Winner: ${result['winner']}',
-                    style: TextStyle(
-                      color: AppColors.white.withOpacity(0.5),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
+          const SizedBox(width: 8),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -114,24 +166,24 @@ class ResultsTab extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppColors.primaryGreen.withOpacity(0.09),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      Icons.calendar_today,
-                      color: AppColors.primaryGreen,
-                      size: 8,
+                      Icons.calendar_today_outlined,
+                      color: AppColors.primaryGreen.withOpacity(0.8),
+                      size: 9,
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 3),
                     Text(
                       result['date']!,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: AppColors.primaryGreen,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w500,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],

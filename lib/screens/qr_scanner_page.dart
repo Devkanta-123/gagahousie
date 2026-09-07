@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../utils/constants.dart';
+import '../widgets/gaga_app_header.dart';
 import 'dart:math';
 class QRScannerPage extends StatefulWidget {
   final List<String> selectedTickets;
@@ -113,7 +114,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Total Amount: \$${widget.totalAmount.toStringAsFixed(2)}',
+              'Total Amount: ₹${widget.totalAmount.toStringAsFixed(2)}',
               style: const TextStyle(
                 color: AppColors.primaryGreen,
                 fontWeight: FontWeight.bold,
@@ -148,23 +149,13 @@ class _QRScannerPageState extends State<QRScannerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text(
-          'QR Scanner',
-          style: TextStyle(
-            color: AppColors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
       body: Column(
         children: [
+          const GaGaAppHeader(
+            showBackButton: true,
+            compact: true,
+            subtitle: 'Scan QR Code • Payment',
+          ),
           // Timer Card
           _buildTimerCard(),
           
@@ -236,60 +227,67 @@ class _QRScannerPageState extends State<QRScannerPage> {
   }
   
   Widget _buildQRScanner() {
-    // Simulated QR scanner view
     return GestureDetector(
       onTap: _simulateQRScan,
       child: Container(
         width: 250,
         height: 250,
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.8),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: AppColors.primaryGreen,
-            width: 3,
+            width: 3.5,
           ),
           boxShadow: [
             BoxShadow(
-              color: AppColors.glowGreen.withOpacity(0.5),
-              blurRadius: 20,
-              spreadRadius: 5,
+              color: AppColors.glowGreen.withOpacity(0.4),
+              blurRadius: 18,
+              spreadRadius: 3,
             ),
           ],
         ),
-        child: Stack(
-          children: [
-            // Simulated QR code pattern
-            Center(
-              child: Container(
-                width: 180,
-                height: 180,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: CustomPaint(
-                  painter: QRCodePainter(),
-                  size: const Size(180, 180),
-                ),
-              ),
-            ),
-            // Scanning animation overlay
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: AnimatedContainer(
-                duration: const Duration(seconds: 2),
-                height: 3,
-                color: AppColors.primaryGreen,
-                child: const LinearProgressIndicator(
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryGreen),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16.5),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // QR Image perfectly scaled and fitted to the border div
+              Transform.scale(
+                scale: 1.385,
+                alignment: const Alignment(0.0, -0.09),
+                child: Image.asset(
+                  'assets/qr_scanner.png',
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.all(12),
+                      child: CustomPaint(
+                        painter: QRCodePainter(),
+                        size: const Size(250, 250),
+                      ),
+                    );
+                  },
                 ),
               ),
-            ),
-          ],
+              // Scanning animation overlay across full width
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: AnimatedContainer(
+                  duration: const Duration(seconds: 2),
+                  height: 3,
+                  color: AppColors.primaryGreen,
+                  child: const LinearProgressIndicator(
+                    backgroundColor: Colors.transparent,
+                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryGreen),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -318,7 +316,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Amount: \$${widget.totalAmount.toStringAsFixed(2)}',
+              'Amount: ₹${widget.totalAmount.toStringAsFixed(2)}',
               style: const TextStyle(
                 color: AppColors.primaryGreen,
                 fontSize: 18,
@@ -435,7 +433,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
                 ),
               ),
               Text(
-                '\$${widget.totalAmount.toStringAsFixed(2)}',
+                '₹${widget.totalAmount.toStringAsFixed(2)}',
                 style: TextStyle(
                   color: AppColors.primaryGreen,
                   fontSize: 20,

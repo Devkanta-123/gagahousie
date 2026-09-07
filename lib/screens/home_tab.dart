@@ -1,9 +1,9 @@
-// home_tab.dart
 import 'package:flutter/material.dart';
 import '../utils/constants.dart';
 import 'draw_page.dart';
 import 'my_tickets.dart';
 import '../widgets/balance_card.dart'; // Import the balance card widget
+import '../widgets/gaga_app_header.dart';
 import 'ticket_selection_page.dart';
 
 class HomeTab extends StatefulWidget {
@@ -14,10 +14,24 @@ class HomeTab extends StatefulWidget {
 }
 
 class _HomeTabState extends State<HomeTab> {
-  final PageController _ticketPageController = PageController();
+  static const int _loopMultiplier = 1000;
+  late final int _initialTicketPage;
+  late final PageController _ticketPageController;
   final PageController _winnerPageController = PageController();
   int _currentTicketPage = 0;
   int _currentWinnerPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialTicketPage = upcomingTickets.isNotEmpty
+        ? upcomingTickets.length * (_loopMultiplier ~/ 2)
+        : 0;
+    _ticketPageController = PageController(
+      viewportFraction: 0.70,
+      initialPage: _initialTicketPage,
+    );
+  }
 
   @override
   void dispose() {
@@ -122,11 +136,10 @@ class _HomeTabState extends State<HomeTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
-          _buildHeader(),
-
-          // Balance Card - Using Reusable Widget
-          const BalanceCard(
+          // Integrated GaGa Housie Header with Balance + Wallet + Recharge
+          const GaGaAppHeader(
+            compact: true,
+            showBalance: true,
             balance: 1000.00,
             showRechargeButton: true,
           ),
@@ -140,53 +153,6 @@ class _HomeTabState extends State<HomeTab> {
           // Winners Section - Slider with Arrows (Rectangular & Compact)
           _buildWinnersSection(),
         ],
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(
-        AppDimens.paddingLarge,
-        18,
-        AppDimens.paddingLarge,
-        6,
-      ),
-      child: Center(
-        child: Column(
-          children: [
-            const Text(
-              'GaGa',
-              style: TextStyle(
-                fontSize: 34,
-                fontWeight: FontWeight.w900,
-                color: AppColors.primaryGreen,
-                letterSpacing: 3,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-              decoration: BoxDecoration(
-                color: AppColors.primaryGreen.withOpacity(0.09),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: AppColors.primaryGreen.withOpacity(0.18),
-                  width: 0.8,
-                ),
-              ),
-              child: const Text(
-                'HOUSIE TAMBOLA',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primaryGreen,
-                  letterSpacing: 2,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -424,8 +390,8 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Widget _buildUpcomingTicketsSlider() {
-    final int itemsPerSlide = 2;
-    final int totalPages = (upcomingTickets.length / itemsPerSlide).ceil();
+    final int totalTickets = upcomingTickets.length;
+    final int totalVirtualPages = totalTickets * _loopMultiplier;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -434,7 +400,7 @@ class _HomeTabState extends State<HomeTab> {
         Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: AppDimens.paddingLarge,
-            vertical: 10,
+            vertical: 8,
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -461,7 +427,7 @@ class _HomeTabState extends State<HomeTab> {
                   ),
                 ),
                 child: Text(
-                  '${upcomingTickets.length} Available',
+                  '$totalTickets Available',
                   style: const TextStyle(
                     color: AppColors.primaryGreen,
                     fontSize: 10,
@@ -473,37 +439,33 @@ class _HomeTabState extends State<HomeTab> {
           ),
         ),
 
-        // Sidewise Responsive Slider with 2 Tickets per Slide
+        // Responsive Slider: 1 full ticket card with reduced width and partial left/right peek for swipe indication
         LayoutBuilder(
           builder: (context, constraints) {
             final double availableWidth = constraints.maxWidth;
             final double horizontalMargin =
-                availableWidth > 640 ? (availableWidth - 620) / 2 : 12.0;
+                availableWidth > 640 ? (availableWidth - 620) / 2 : 8.0;
 
             return Container(
               margin: EdgeInsets.symmetric(horizontal: horizontalMargin),
               child: Row(
                 children: [
-                  // Left Navigation Chevron
+                  // Left Navigation Chevron (Loops smoothly to previous/last ticket)
                   GestureDetector(
                     onTap: () {
-                      if (_currentTicketPage > 0) {
-                        _ticketPageController.previousPage(
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                        );
-                      }
+                      _ticketPageController.previousPage(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                      );
                     },
                     child: Container(
-                      width: 32,
-                      height: 32,
+                      width: 28,
+                      height: 28,
                       decoration: BoxDecoration(
                         color: Colors.white,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: _currentTicketPage > 0
-                              ? AppColors.primaryGreen.withOpacity(0.3)
-                              : AppColors.primaryGreen.withOpacity(0.12),
+                          color: AppColors.primaryGreen.withOpacity(0.25),
                           width: 1,
                         ),
                         boxShadow: [
@@ -514,21 +476,19 @@ class _HomeTabState extends State<HomeTab> {
                           ),
                         ],
                       ),
-                      child: Icon(
+                      child: const Icon(
                         Icons.chevron_left_rounded,
-                        color: _currentTicketPage > 0
-                            ? AppColors.primaryGreen
-                            : AppColors.primaryGreen.withOpacity(0.25),
-                        size: 22,
+                        color: AppColors.primaryGreen,
+                        size: 20,
                       ),
                     ),
                   ),
 
-                  // Middle: PageView (2 tickets side-by-side per slide)
+                  // Middle: PageView (1 full card with reduced width, showing last ticket on left and next on right)
                   Expanded(
                     child: SizedBox(
-                      height: 235,
-                      child: totalPages == 0
+                      height: 185,
+                      child: totalTickets == 0
                           ? const Center(
                               child: Text(
                                 'No upcoming tickets',
@@ -540,41 +500,23 @@ class _HomeTabState extends State<HomeTab> {
                             )
                           : PageView.builder(
                               controller: _ticketPageController,
-                              itemCount: totalPages,
+                              itemCount: totalVirtualPages,
+                              padEnds: true,
                               onPageChanged: (page) {
                                 setState(() {
-                                  _currentTicketPage = page;
+                                  _currentTicketPage = page % totalTickets;
                                 });
                               },
-                              itemBuilder: (context, pageIndex) {
-                                final int firstIndex = pageIndex * 2;
-                                final int secondIndex = firstIndex + 1;
-                                final ticket1 = upcomingTickets[firstIndex];
-                                final ticket2 =
-                                    secondIndex < upcomingTickets.length
-                                        ? upcomingTickets[secondIndex]
-                                        : null;
-
+                              itemBuilder: (context, index) {
+                                final int actualIndex = index % totalTickets;
                                 return Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: _buildUpcomingTicketCard(
-                                          ticket: ticket1,
-                                          index: firstIndex,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: ticket2 != null
-                                            ? _buildUpcomingTicketCard(
-                                                ticket: ticket2,
-                                                index: secondIndex,
-                                              )
-                                            : const SizedBox.shrink(),
-                                      ),
-                                    ],
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 3,
+                                  ),
+                                  child: _buildUpcomingTicketCard(
+                                    ticket: upcomingTickets[actualIndex],
+                                    index: actualIndex,
                                   ),
                                 );
                               },
@@ -582,26 +524,22 @@ class _HomeTabState extends State<HomeTab> {
                     ),
                   ),
 
-                  // Right Navigation Chevron
+                  // Right Navigation Chevron (Loops smoothly to next ticket)
                   GestureDetector(
                     onTap: () {
-                      if (_currentTicketPage < totalPages - 1) {
-                        _ticketPageController.nextPage(
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                        );
-                      }
+                      _ticketPageController.nextPage(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                      );
                     },
                     child: Container(
-                      width: 32,
-                      height: 32,
+                      width: 28,
+                      height: 28,
                       decoration: BoxDecoration(
                         color: Colors.white,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: _currentTicketPage < totalPages - 1
-                              ? AppColors.primaryGreen.withOpacity(0.3)
-                              : AppColors.primaryGreen.withOpacity(0.12),
+                          color: AppColors.primaryGreen.withOpacity(0.25),
                           width: 1,
                         ),
                         boxShadow: [
@@ -612,12 +550,10 @@ class _HomeTabState extends State<HomeTab> {
                           ),
                         ],
                       ),
-                      child: Icon(
+                      child: const Icon(
                         Icons.chevron_right_rounded,
-                        color: _currentTicketPage < totalPages - 1
-                            ? AppColors.primaryGreen
-                            : AppColors.primaryGreen.withOpacity(0.25),
-                        size: 22,
+                        color: AppColors.primaryGreen,
+                        size: 20,
                       ),
                     ),
                   ),
@@ -627,14 +563,14 @@ class _HomeTabState extends State<HomeTab> {
           },
         ),
 
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
 
         // Indicator Dots for Slider
-        if (totalPages > 1)
+        if (totalTickets > 1)
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(
-              totalPages,
+              totalTickets,
               (index) => AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
                 margin: const EdgeInsets.symmetric(horizontal: 3),
@@ -649,12 +585,12 @@ class _HomeTabState extends State<HomeTab> {
               ),
             ),
           ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
       ],
     );
   }
 
-  // Individual Ticket Card (Professional White & Green Palette)
+  // Individual Ticket Card (Compact, Reduced Width, Professional White & Green Palette)
   Widget _buildUpcomingTicketCard({
     required Map<String, dynamic> ticket,
     required int index,
@@ -684,65 +620,71 @@ class _HomeTabState extends State<HomeTab> {
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Header: Ticket Name Tag
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: AppColors.primaryGreen.withOpacity(0.09),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              ticket['ticket'] as String? ?? 'Ticket',
-              textAlign: TextAlign.center,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppColors.primaryGreen,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
+          // Header: Ticket Name Tag on left, Date & Time on right (Compact single row)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.09),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  ticket['ticket'] as String? ?? 'Ticket',
+                  style: const TextStyle(
+                    color: AppColors.primaryGreen,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 3),
-
-          // Date & Time Row (Fitted to ensure zero overflow on narrow screens)
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.calendar_today_outlined,
-                  size: 9,
-                  color: AppColors.primaryGreen.withOpacity(0.75),
-                ),
-                const SizedBox(width: 3),
-                Text(
-                  ticket['date'] as String? ?? '',
-                  style: TextStyle(
-                    color: AppColors.primaryGreen.withOpacity(0.85),
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.w500,
+              const SizedBox(width: 6),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.calendar_today_outlined,
+                          size: 9,
+                          color: AppColors.primaryGreen.withOpacity(0.75),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          ticket['date'] as String? ?? '',
+                          style: TextStyle(
+                            color: AppColors.primaryGreen.withOpacity(0.85),
+                            fontSize: 8.5,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.access_time_rounded,
+                          size: 9,
+                          color: AppColors.primaryGreen.withOpacity(0.75),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          ticket['time'] as String? ?? '',
+                          style: TextStyle(
+                            color: AppColors.primaryGreen.withOpacity(0.85),
+                            fontSize: 8.5,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(width: 5),
-                Icon(
-                  Icons.access_time_rounded,
-                  size: 9,
-                  color: AppColors.primaryGreen.withOpacity(0.75),
-                ),
-                const SizedBox(width: 3),
-                Text(
-                  ticket['time'] as String? ?? '',
-                  style: TextStyle(
-                    color: AppColors.primaryGreen.withOpacity(0.85),
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
           const SizedBox(height: 3),
 
@@ -752,54 +694,46 @@ class _HomeTabState extends State<HomeTab> {
             height: 4,
           ),
 
-          // Prize List - Expanded with ListView to guarantee zero overflow
-          Expanded(
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: prizes.length,
-              itemBuilder: (context, i) {
-                final prize = prizes[i];
-                final isTopPrize = i == 0;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 0.7),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          prize['name'] as String? ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: isTopPrize
-                                ? AppColors.primaryGreen
-                                : const Color(0xFF2D4A3E),
-                            fontSize: 8.5,
-                            fontWeight: isTopPrize
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                          ),
-                        ),
+          // Prize List - Compact rows without extra whitespace
+          ...prizes.map((prize) {
+            final isTopPrize = prize == prizes.first;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 0.5),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      prize['name'] as String? ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isTopPrize
+                            ? AppColors.primaryGreen
+                            : const Color(0xFF2D4A3E),
+                        fontSize: 8.5,
+                        fontWeight: isTopPrize
+                            ? FontWeight.w600
+                            : FontWeight.normal,
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        prize['price'] as String? ?? '',
-                        style: const TextStyle(
-                          color: AppColors.primaryGreen,
-                          fontSize: 8.5,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                );
-              },
-            ),
-          ),
+                  const SizedBox(width: 4),
+                  Text(
+                    prize['price'] as String? ?? '',
+                    style: const TextStyle(
+                      color: AppColors.primaryGreen,
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
 
-          const SizedBox(height: 4),
+          const SizedBox(height: 5),
 
-          // Buy Now Button
+          // Buy Now Button - Tightly positioned right under price details
           GestureDetector(
             onTap: () {
               final Map<String, String> ticketData = {
@@ -821,7 +755,7 @@ class _HomeTabState extends State<HomeTab> {
             },
             child: Container(
               width: double.infinity,
-              height: 24,
+              height: 25,
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   colors: [

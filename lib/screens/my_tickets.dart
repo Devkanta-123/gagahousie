@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../utils/constants.dart';
+import '../widgets/gaga_app_header.dart';
 import 'ticket_details.dart';
 
 class MyTicketsPage extends StatelessWidget {
@@ -7,74 +8,123 @@ class MyTicketsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ticketsList = [
+      {
+        'ticketNumber': '01. 02. 03.',
+        'date': '12/05/2024',
+        'time': '01:30 PM',
+        'price': '100',
+        'ticketId': 'TKT001',
+        'status': 'Active',
+      },
+      {
+        'ticketNumber': '04. 12. 25.',
+        'date': '12/05/2024',
+        'time': '01:30 PM',
+        'price': '50',
+        'ticketId': 'TKT002',
+        'status': 'Active',
+      },
+      {
+        'ticketNumber': '11. 22. 33.',
+        'date': '13/05/2024',
+        'time': '04:00 PM',
+        'price': '50',
+        'ticketId': 'TKT003',
+        'status': 'Booked',
+      },
+      {
+        'ticketNumber': '07. 14. 28.',
+        'date': '14/05/2024',
+        'time': '07:30 PM',
+        'price': '50',
+        'ticketId': 'TKT004',
+        'status': 'Booked',
+      },
+    ];
+
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text(
-          'My Tickets',
-          style: TextStyle(
-            color: AppColors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(AppDimens.paddingLarge),
+      body: Column(
         children: [
-          // Each ticket card navigates to its details
-          _buildTicketCard(
-            context,
-            ticketNumber: '01. 02. 03.',
-            date: '12/05/2001',
-            time: '01:30 p.m.',
-            price: '100',
-            ticketId: 'TKT001',
+          // Full-width consistent branded header with integrated balance card
+          const GaGaAppHeader(
+            showBackButton: true,
+            subtitle: 'My Purchased Tickets',
+            showBalance: true,
+            balance: 1000.0,
+            showRechargeButton: true,
           ),
-          const SizedBox(height: 16),
-          _buildTicketCard(
-            context,
-            ticketNumber: '01. 02. 03.',
-            date: '12/05/2001',
-            time: '01:30 p.m.',
-            price: '50',
-            ticketId: 'TKT002',
+
+          // Subheader with ticket count
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              16,
+              12,
+              16,
+              4,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Flexible(
+                  child: Text(
+                    'Purchased Tickets',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Color(0xFF0F3B2C),
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2.5),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: AppColors.primaryGreen.withOpacity(0.2),
+                    ),
+                  ),
+                  child: Text(
+                    '${ticketsList.length} Active',
+                    style: const TextStyle(
+                      color: AppColors.primaryGreen,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 16),
-          _buildTicketCard(
-            context,
-            ticketNumber: '01. 02. 03.',
-            date: '12/05/2001',
-            time: '01:30 p.m.',
-            price: '50',
-            ticketId: 'TKT003',
-          ),
-          const SizedBox(height: 16),
-          _buildTicketCard(
-            context,
-            ticketNumber: '01. 02. 03.',
-            date: '12/05/2001',
-            time: '01:30 p.m.',
-            price: '50',
-            ticketId: 'TKT004',
-          ),
-          const SizedBox(height: 16),
-          TextButton(
-            onPressed: () {
-              // View all tickets
-            },
-            child: const Text(
-              'View All →',
-              style: TextStyle(
-                color: AppColors.primaryGreen,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
+
+          // Responsive tickets list matching tickets_tab.dart green cards
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 6,
               ),
+              itemCount: ticketsList.length,
+              itemBuilder: (context, index) {
+                final t = ticketsList[index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _buildTicketCard(
+                    context,
+                    ticketNumber: t['ticketNumber']!,
+                    date: t['date']!,
+                    time: t['time']!,
+                    price: t['price']!,
+                    ticketId: t['ticketId']!,
+                    status: t['status']!,
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -89,6 +139,7 @@ class MyTicketsPage extends StatelessWidget {
     required String time,
     required String price,
     required String ticketId,
+    required String status,
   }) {
     return GestureDetector(
       onTap: () {
@@ -106,105 +157,171 @@ class MyTicketsPage extends StatelessWidget {
         );
       },
       child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              AppColors.primaryGreen.withOpacity(0.15),
-              AppColors.secondaryGreen.withOpacity(0.08),
-            ],
-          ),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(15),
           border: Border.all(
-            color: AppColors.primaryGreen.withOpacity(0.5),
-            width: 1.5,
+            color: AppColors.primaryGreen.withOpacity(0.18),
+            width: 1.1,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primaryGreen.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: Row(
+          children: [
+            // Compact green emblem icon
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: AppColors.primaryGreen.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AppColors.primaryGreen.withOpacity(0.15),
+                  width: 1,
+                ),
+              ),
+              child: const Center(
+                child: Icon(
+                  Icons.confirmation_number_rounded,
+                  color: AppColors.primaryGreen,
+                  size: 19,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+
+            // Flexible ticket details & metadata without overflow
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
-                    'Ticket',
-                    style: TextStyle(
-                      color: AppColors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          'Ticket #$ticketId',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF1E293B),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            'Sl: $ticketNumber',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFF475569),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryGreen.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: AppColors.primaryGreen,
-                        width: 1,
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 2,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.calendar_today_outlined,
+                            size: 11,
+                            color: AppColors.textSecondary.withOpacity(0.8),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            date,
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    child: Text(
-                      '₹$price',
-                      style: const TextStyle(
-                        color: AppColors.primaryGreen,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.access_time_rounded,
+                            size: 11,
+                            color: AppColors.textSecondary.withOpacity(0.8),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            time,
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              _buildInfoRow('Date', date),
-              const SizedBox(height: 8),
-              _buildInfoRow('Time', time),
-              const SizedBox(height: 8),
-              _buildInfoRow('Ticket Sl. No.', ticketNumber),
-            ],
-          ),
+            ),
+            const SizedBox(width: 8),
+
+            // Price & Status Badge
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '₹$price',
+                  style: const TextStyle(
+                    color: AppColors.primaryGreen,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15.5,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    status,
+                    style: const TextStyle(
+                      color: AppColors.primaryGreen,
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 100,
-          child: Text(
-            label,
-            style: const TextStyle(
-              color: AppColors.white,
-              fontSize: 13,
-            ),
-          ),
-        ),
-        Text(
-          ':',
-          style: const TextStyle(
-            color: AppColors.white,
-            fontSize: 13,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
-              color: AppColors.white,
-              fontWeight: FontWeight.w500,
-              fontSize: 13,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

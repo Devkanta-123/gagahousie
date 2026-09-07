@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../utils/constants.dart';
-import 'otp_screen.dart';
+import '../widgets/wavy_header.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,137 +14,174 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController usernameController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
-  
+  bool _obscurePassword = true;
+
+  @override
+  void dispose() {
+    usernameController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  void _handleLogin() async {
+    if (usernameController.text.trim().isEmpty ||
+        passwordController.text.trim().isEmpty) {
+      _showSnackBar('Please fill all fields');
+      return;
+    }
+
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    bool success = await auth.login(
+      usernameController.text.trim(),
+      passwordController.text.trim(),
+    );
+
+    if (success) {
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/otp');
+      }
+    } else {
+      _showSnackBar('Invalid credentials! Use admin@gmail.com / 1234');
+    }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: const Color(0xFF2C3E50),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        color: AppColors.background,
-        child: SafeArea(
-          child: SingleChildScrollView(
-            child: Container(
-              width: double.infinity,
-              color: AppColors.background,
-              child: Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 60),
-                    
-                    // Welcome Text
-                    const Center(
-                      child: Column(
+      body: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          children: [
+            // Professional Wavy Header with GaGa branding, welcome, and demo info
+            const WavyBrandedHeader(
+              subtitle: 'Welcome Back • Sign In to Continue',
+              demoCredential: 'Demo: admin@gmail.com / 1234',
+            ),
+
+            // Form inputs & actions
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+
+                  // Email Address Field
+                  _buildGlassInputField(
+                    controller: usernameController,
+                    hint: 'Email Address',
+                    keyboardType: TextInputType.emailAddress,
+                    icon: Icons.email_outlined,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Password Field with Eye Toggle
+                  _buildGlassInputField(
+                    controller: passwordController,
+                    hint: 'Password',
+                    obscureText: _obscurePassword,
+                    icon: Icons.lock_outlined,
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        color: AppColors.primaryGreen.withOpacity(0.7),
+                        size: 20,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
+                  ),
+
+                  // Forgot Password
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        _showSnackBar('Contact admin to reset password.');
+                      },
+                      child: const Text(
+                        'Forgot Password?',
+                        style: TextStyle(
+                          color: AppColors.primaryGreen,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // Sign In Button with Green Gradient
+                  _buildGradientButton(
+                    text: 'Sign In',
+                    onPressed: _handleLogin,
+                  ),
+
+                  const SizedBox(height: 28),
+
+                  // Register Link
+                  Center(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
-                            'Welcome Back!',
+                            "Don't have an account? ",
                             style: TextStyle(
-                              color: Color(0xFF2C3E50), // Dark text for contrast
-                              fontSize: 32,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.5,
+                              color: Colors.grey.withOpacity(0.8),
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                          SizedBox(height: 8),
-                          Text(
-                            'Sign in to continue',
-                            style: TextStyle(
-                              color: Color(0xFF5D6D7E), // Soft dark for subtitle
-                              fontSize: 16,
-                              fontWeight: FontWeight.w400,
+                          GestureDetector(
+                            onTap: () {
+                              Navigator.pushNamed(context, '/register');
+                            },
+                            child: const Text(
+                              'Sign Up',
+                              style: TextStyle(
+                                color: AppColors.primaryGreen,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ],
                       ),
                     ),
-                    
-                    const SizedBox(height: 50),
-                    
-                    // Username Field
-                    _buildGlassInputField(
-                      controller: usernameController,
-                      hint: 'Email Address',
-                      icon: Icons.email_outlined,
-                    ),
-                    const SizedBox(height: 16),
-                    
-                    // Password Field
-                    _buildGlassInputField(
-                      controller: passwordController,
-                      hint: 'Password',
-                      obscureText: true,
-                      icon: Icons.lock_outlined,
-                    ),
-                    
-                    // Forgot Password
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: () {
-                          // Handle forgot password
-                        },
-                        child: const Text(
-                          'Forgot Password?',
-                          style: TextStyle(
-                            color: Color(0xFF00B894), // Greenish color
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 10),
-                    
-                    // Sign In Button with Green Gradient
-                    _buildGradientButton(
-                      text: 'Sign In',
-                      onPressed: _handleLogin,
-                    ),
-                    
-                    const SizedBox(height: 30),
-                    
-                    // Register Link
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          "Don't have an account? ",
-                          style: TextStyle(
-                            color: Colors.grey.withOpacity(0.7),
-                            fontSize: 14,
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.pushNamed(context, '/register');
-                          },
-                          child: const Text(
-                            'Sign Up',
-                            style: TextStyle(
-                              color: Color(0xFF00B894), // Greenish color
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    
-                    const SizedBox(height: 20),
-                  ],
-                ),
+                  ),
+
+                  const SizedBox(height: 24),
+                ],
               ),
             ),
-          ),
+          ],
         ),
       ),
     );
   }
-  
+
   Widget _buildGlassInputField({
     required TextEditingController controller,
     required String hint,
@@ -152,16 +189,21 @@ class _LoginScreenState extends State<LoginScreen> {
     bool obscureText = false,
     int? maxLength,
     IconData? icon,
+    Widget? suffixIcon,
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.9),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.primaryGreen.withOpacity(0.18),
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
+            color: AppColors.primaryGreen.withOpacity(0.06),
             blurRadius: 10,
-            spreadRadius: 1,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
@@ -172,52 +214,49 @@ class _LoginScreenState extends State<LoginScreen> {
         maxLength: maxLength,
         style: const TextStyle(
           color: Color(0xFF2C3E50),
-          fontSize: 16,
+          fontSize: 15,
+          fontWeight: FontWeight.w500,
         ),
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: TextStyle(
-            color: Colors.grey.withOpacity(0.6),
-            fontSize: 15,
+            color: Colors.grey.withOpacity(0.7),
+            fontSize: 14,
           ),
           border: InputBorder.none,
           counterText: '',
           prefixIcon: icon != null
               ? Icon(
                   icon,
-                  color: const Color(0xFF00B894).withOpacity(0.6),
+                  color: AppColors.primaryGreen,
                   size: 22,
                 )
               : null,
+          suffixIcon: suffixIcon,
           contentPadding: const EdgeInsets.symmetric(
-            horizontal: 20,
-            vertical: 18,
+            horizontal: 18,
+            vertical: 16,
           ),
         ),
       ),
     );
   }
-  
+
   Widget _buildGradientButton({
     required String text,
     required VoidCallback onPressed,
   }) {
     return Container(
       width: double.infinity,
-      height: 55,
+      height: 52,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [
-            Color(0xFF00B894),
-            Color(0xFF00A381),
-          ],
-        ),
+        gradient: AppColors.greenGradient,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF00B894).withOpacity(0.3),
-            blurRadius: 15,
-            spreadRadius: 2,
+            color: AppColors.glowGreen,
+            blurRadius: 12,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
@@ -233,51 +272,13 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Text(
           text,
           style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
             color: Colors.white,
             letterSpacing: 0.5,
           ),
         ),
       ),
     );
-  }
-  
-  void _handleLogin() async {
-    if (usernameController.text.isEmpty || passwordController.text.isEmpty) {
-      _showSnackBar('Please fill all fields');
-      return;
-    }
-    
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    bool success = await auth.login(usernameController.text, passwordController.text);
-    
-    if (success) {
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/otp');
-      }
-    } else {
-      _showSnackBar('Invalid credentials! Use admin@gmail.com / 1234');
-    }
-  }
-  
-  void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: const Color(0xFF2C3E50),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-      ),
-    );
-  }
-  
-  @override
-  void dispose() {
-    usernameController.dispose();
-    passwordController.dispose();
-    super.dispose();
   }
 }

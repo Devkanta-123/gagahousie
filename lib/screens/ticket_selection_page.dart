@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:math';
 import '../screens/ticket_purchase_page.dart';
 import '../utils/constants.dart';
+import '../widgets/gaga_app_header.dart';
 
 class TicketSelectionPage extends StatefulWidget {
   final Map<String, String> ticket;
@@ -219,25 +220,18 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Text(
-          widget.ticket['ticket']!,
-          style: const TextStyle(
-            color: Color(0xFF2C3E50),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF2C3E50)),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
       body: Container(
         color: AppColors.background,
         child: Column(
           children: [
+            GaGaAppHeader(
+              showBackButton: true,
+              compact: true,
+              subtitle: '${widget.ticket['ticket'] ?? 'Ticket'} • Select Numbers',
+              showBalance: true,
+              balance: 1000.0,
+              showRechargeButton: true,
+            ),
             // Selection Info Banner
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
