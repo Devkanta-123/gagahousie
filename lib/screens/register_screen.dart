@@ -18,7 +18,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController mobileController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
-  final TextEditingController confirmPasswordController = TextEditingController();
+  final TextEditingController confirmPasswordController =
+      TextEditingController();
   final TextEditingController otpController = TextEditingController();
 
   bool isPasswordVisible = false;
@@ -96,7 +97,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
     _startResendTimer();
 
-    _showSnackBar('🔔 [Notification] Your GaGa verification OTP is $generatedOtp');
+    _showSnackBar(
+        '🔔 [Notification] Your GaGa verification OTP is $generatedOtp');
   }
 
   void _handleVerifyAndRegister() async {
@@ -110,7 +112,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     // Verify against real-time generated OTP
     if (!auth.verifyRegistrationOtp(otp)) {
-      _showSnackBar('Invalid OTP! Please check the code in the notification banner.');
+      _showSnackBar(
+          'Invalid OTP! Please check the code in the notification banner.');
       return;
     }
 
@@ -135,7 +138,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _showSnackBar('Registration successful! Welcome to GaGa Housie.');
       Navigator.pushReplacementNamed(context, '/home');
     } else {
-      _showSnackBar(auth.errorMessage ?? 'Registration failed. Please try again.');
+      _showSnackBar(
+          auth.errorMessage ?? 'Registration failed. Please try again.');
     }
   }
 
@@ -202,7 +206,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
             // Form inputs & actions
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -243,7 +248,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     icon: Icons.lock_outlined,
                     suffixIcon: IconButton(
                       icon: Icon(
-                        isPasswordVisible ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                        isPasswordVisible
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
                         color: AppColors.primaryGreen.withOpacity(0.7),
                         size: 20,
                       ),
@@ -264,7 +271,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     icon: Icons.lock_outlined,
                     suffixIcon: IconButton(
                       icon: Icon(
-                        isConfirmPasswordVisible ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                        isConfirmPasswordVisible
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
                         color: AppColors.primaryGreen.withOpacity(0.7),
                         size: 20,
                       ),
@@ -323,7 +332,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     // Real-time Notification Banner for OTP
                     Consumer<AuthProvider>(
                       builder: (context, auth, _) {
-                        final currentOtp = auth.activeRegistrationOtp ?? '------';
+                        final currentOtp =
+                            auth.activeRegistrationOtp ?? '------';
                         return _buildRealTimeNotificationCard(currentOtp);
                       },
                     ),
@@ -511,7 +521,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   otpController.text = otp;
                   _showSnackBar('OTP $otp auto-filled!');
                 },
-                icon: const Icon(Icons.touch_app_rounded, size: 15, color: AppColors.primaryGreen),
+                icon: const Icon(Icons.touch_app_rounded,
+                    size: 15, color: AppColors.primaryGreen),
                 label: const Text(
                   'Auto-Fill',
                   style: TextStyle(
@@ -522,10 +533,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 style: TextButton.styleFrom(
                   backgroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
-                    side: BorderSide(color: AppColors.primaryGreen.withOpacity(0.3)),
+                    side: BorderSide(
+                        color: AppColors.primaryGreen.withOpacity(0.3)),
                   ),
                 ),
               ),

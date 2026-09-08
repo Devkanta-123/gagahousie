@@ -362,7 +362,8 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
     );
   }
 
-  Widget _buildBreakdownRow(String label, String value, {bool isGreen = false, bool isAlert = false}) {
+  Widget _buildBreakdownRow(String label, String value,
+      {bool isGreen = false, bool isAlert = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -384,7 +385,8 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                     ? AppColors.primaryGreen
                     : const Color(0xFF1E293B),
             fontSize: 13,
-            fontWeight: (isGreen || isAlert) ? FontWeight.bold : FontWeight.w600,
+            fontWeight:
+                (isGreen || isAlert) ? FontWeight.bold : FontWeight.w600,
           ),
         ),
       ],
@@ -498,7 +500,8 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFDC2626),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 shape: RoundedRectangleBorder(
@@ -607,7 +610,8 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
   }
 
   void _confirmPurchase(double total) {
-    final String receiptId = DateTime.now().millisecondsSinceEpoch.toString().substring(7);
+    final String receiptId =
+        DateTime.now().millisecondsSinceEpoch.toString().substring(7);
     final String ticketTitle = widget.ticket?['ticket'] ?? 'Ticket #001';
     final String ticketDate = widget.ticket?['date'] ?? 'Upcoming Draw';
 
@@ -617,7 +621,8 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
       builder: (context) {
         return Dialog(
           backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
           child: Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
@@ -738,7 +743,8 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                             ],
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
                             decoration: BoxDecoration(
                               color: AppColors.primaryGreen.withOpacity(0.12),
                               borderRadius: BorderRadius.circular(10),
@@ -746,7 +752,8 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                             child: const Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.verified_rounded, color: AppColors.primaryGreen, size: 11),
+                                Icon(Icons.verified_rounded,
+                                    color: AppColors.primaryGreen, size: 11),
                                 SizedBox(width: 3),
                                 Text(
                                   'VERIFIED',
@@ -769,11 +776,14 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                       const SizedBox(height: 6),
                       _buildDialogRow('Draw Date:', ticketDate),
                       const SizedBox(height: 6),
-                      _buildDialogRow('Ticket Price:', '₹${ticketPrice.toStringAsFixed(2)}'),
+                      _buildDialogRow('Ticket Price:',
+                          '₹${ticketPrice.toStringAsFixed(2)}'),
                       const SizedBox(height: 10),
                       Divider(color: Colors.black.withOpacity(0.06), height: 1),
                       const SizedBox(height: 10),
-                      _buildDialogRow('Total Paid:', '₹${total.toStringAsFixed(2)}', isHighlight: true),
+                      _buildDialogRow(
+                          'Total Paid:', '₹${total.toStringAsFixed(2)}',
+                          isHighlight: true),
                       const SizedBox(height: 6),
                       _buildDialogRow(
                         'Remaining Balance:',
@@ -817,18 +827,21 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                       Navigator.pop(context); // Dismiss dialog
                       Navigator.pushReplacement(
                         context,
-                        MaterialPageRoute(builder: (context) => const MyTicketsPage()),
+                        MaterialPageRoute(
+                            builder: (context) => const MyTicketsPage()),
                       );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.transparent,
                       shadowColor: Colors.transparent,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
                     ),
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.confirmation_number_outlined, color: Colors.white, size: 18),
+                        Icon(Icons.confirmation_number_outlined,
+                            color: Colors.white, size: 18),
                         SizedBox(width: 8),
                         Text(
                           'View My Tickets',
@@ -858,10 +871,12 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                       Navigator.pop(context); // Return to previous screen
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('₹${total.toStringAsFixed(2)} paid successfully! Ticket confirmed.'),
+                          content: Text(
+                              '₹${total.toStringAsFixed(2)} paid successfully! Ticket confirmed.'),
                           backgroundColor: AppColors.primaryGreen,
                           behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
                         ),
                       );
                     },
@@ -883,14 +898,16 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
     );
   }
 
-  Widget _buildDialogRow(String label, String value, {bool isHighlight = false, bool isSuccess = false}) {
+  Widget _buildDialogRow(String label, String value,
+      {bool isHighlight = false, bool isSuccess = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           label,
           style: TextStyle(
-            color: isHighlight ? const Color(0xFF0F3B2C) : const Color(0xFF64748B),
+            color:
+                isHighlight ? const Color(0xFF0F3B2C) : const Color(0xFF64748B),
             fontSize: isHighlight ? 14 : 13,
             fontWeight: isHighlight ? FontWeight.bold : FontWeight.normal,
           ),
@@ -905,7 +922,8 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                     ? const Color(0xFF0F3B2C)
                     : const Color(0xFF1E293B),
             fontSize: isHighlight ? 15 : 13,
-            fontWeight: (isHighlight || isSuccess) ? FontWeight.bold : FontWeight.w600,
+            fontWeight:
+                (isHighlight || isSuccess) ? FontWeight.bold : FontWeight.w600,
           ),
         ),
       ],

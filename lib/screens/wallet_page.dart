@@ -18,7 +18,7 @@ class _WalletPageState extends State<WalletPage> {
   final TextEditingController _accountController = TextEditingController();
   File? _screenshotFile;
   final ImagePicker _picker = ImagePicker();
-  
+
   // Dummy QR Code image path
   final String qrCodeImage = 'assets/qr_scanner.png';
   final String upiId = 'gagahousie@upi';
@@ -45,18 +45,19 @@ class _WalletPageState extends State<WalletPage> {
           Expanded(
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Compact QR Code Scanner Section (White Card + Green Text Theme)
                   _buildCompactQRCodeSection(),
-                  
+
                   const SizedBox(height: 14),
-                  
+
                   // Primary Action: Open Modal Form for Screenshot & Bank Details
                   _buildSubmitProofButton(),
-                  
+
                   if (_screenshotFile != null) ...[
                     const SizedBox(height: 10),
                     _buildPendingProofIndicator(),
@@ -142,7 +143,7 @@ class _WalletPageState extends State<WalletPage> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 12),
-          
+
           // Compact QR Code Image Container (140x140)
           Container(
             width: 140,
@@ -199,7 +200,7 @@ class _WalletPageState extends State<WalletPage> {
               ),
             ),
           ),
-          
+
           const SizedBox(height: 12),
 
           // Copyable UPI ID chip with rich green styling
@@ -243,7 +244,8 @@ class _WalletPageState extends State<WalletPage> {
                     );
                   },
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3.5),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 9, vertical: 3.5),
                     decoration: BoxDecoration(
                       color: AppColors.primaryGreen,
                       borderRadius: BorderRadius.circular(10),
@@ -402,11 +404,14 @@ class _WalletPageState extends State<WalletPage> {
             ],
           ),
           const SizedBox(height: 12),
-          _buildGuideStep('1', 'Scan the QR code or copy UPI ID in any payment app.'),
+          _buildGuideStep(
+              '1', 'Scan the QR code or copy UPI ID in any payment app.'),
           const SizedBox(height: 8),
-          _buildGuideStep('2', 'Complete the payment and save the transaction screenshot.'),
+          _buildGuideStep(
+              '2', 'Complete the payment and save the transaction screenshot.'),
           const SizedBox(height: 8),
-          _buildGuideStep('3', 'Tap "I Have Paid", upload receipt & bank details for admin approval.'),
+          _buildGuideStep('3',
+              'Tap "I Have Paid", upload receipt & bank details for admin approval.'),
         ],
       ),
     );
@@ -452,9 +457,27 @@ class _WalletPageState extends State<WalletPage> {
   /// Recent transactions mock list with white card and green text
   Widget _buildRecentTransactionsCard() {
     final List<Map<String, dynamic>> transactions = [
-      {'title': 'Wallet Top-Up', 'date': 'Today, 11:30 AM', 'amount': '+₹500.00', 'isCredit': true, 'status': 'Approved'},
-      {'title': 'Ticket #TKT001 Purchase', 'date': 'Yesterday, 04:15 PM', 'amount': '-₹100.00', 'isCredit': false, 'status': 'Completed'},
-      {'title': 'Tambola Quick Win', 'date': '12 May, 02:40 PM', 'amount': '+₹250.00', 'isCredit': true, 'status': 'Credited'},
+      {
+        'title': 'Wallet Top-Up',
+        'date': 'Today, 11:30 AM',
+        'amount': '+₹500.00',
+        'isCredit': true,
+        'status': 'Approved'
+      },
+      {
+        'title': 'Ticket #TKT001 Purchase',
+        'date': 'Yesterday, 04:15 PM',
+        'amount': '-₹100.00',
+        'isCredit': false,
+        'status': 'Completed'
+      },
+      {
+        'title': 'Tambola Quick Win',
+        'date': '12 May, 02:40 PM',
+        'amount': '+₹250.00',
+        'isCredit': true,
+        'status': 'Credited'
+      },
     ];
 
     return Container(
@@ -559,7 +582,8 @@ class _WalletPageState extends State<WalletPage> {
                         ),
                         Container(
                           margin: const EdgeInsets.only(top: 2),
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1.5),
                           decoration: BoxDecoration(
                             color: const Color(0xFF00B894).withOpacity(0.09),
                             borderRadius: BorderRadius.circular(6),
@@ -708,7 +732,8 @@ class _WalletPageState extends State<WalletPage> {
                         ),
                         filled: true,
                         fillColor: Colors.white.withOpacity(0.06),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide(
@@ -759,7 +784,8 @@ class _WalletPageState extends State<WalletPage> {
                         ),
                         filled: true,
                         fillColor: Colors.white.withOpacity(0.06),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                           borderSide: BorderSide(
@@ -910,12 +936,14 @@ class _WalletPageState extends State<WalletPage> {
               ),
             ),
             IconButton(
-              icon: const Icon(Icons.refresh_rounded, color: Colors.white70, size: 20),
+              icon: const Icon(Icons.refresh_rounded,
+                  color: Colors.white70, size: 20),
               tooltip: 'Change image',
               onPressed: () => _pickImageModal(setModalState),
             ),
             IconButton(
-              icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent, size: 20),
+              icon: const Icon(Icons.delete_outline_rounded,
+                  color: Colors.redAccent, size: 20),
               tooltip: 'Remove',
               onPressed: () {
                 setModalState(() {
@@ -1012,8 +1040,10 @@ class _WalletPageState extends State<WalletPage> {
               ),
               const SizedBox(height: 10),
               ListTile(
-                leading: const Icon(Icons.camera_alt_rounded, color: Color(0xFF00E676)),
-                title: const Text('Take Photo with Camera', style: TextStyle(color: Colors.white, fontSize: 13.5)),
+                leading: const Icon(Icons.camera_alt_rounded,
+                    color: Color(0xFF00E676)),
+                title: const Text('Take Photo with Camera',
+                    style: TextStyle(color: Colors.white, fontSize: 13.5)),
                 onTap: () async {
                   Navigator.pop(sheetContext);
                   final XFile? photo = await _picker.pickImage(
@@ -1033,8 +1063,10 @@ class _WalletPageState extends State<WalletPage> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.photo_library_rounded, color: Color(0xFF00E676)),
-                title: const Text('Choose from Gallery', style: TextStyle(color: Colors.white, fontSize: 13.5)),
+                leading: const Icon(Icons.photo_library_rounded,
+                    color: Color(0xFF00E676)),
+                title: const Text('Choose from Gallery',
+                    style: TextStyle(color: Colors.white, fontSize: 13.5)),
                 onTap: () async {
                   Navigator.pop(sheetContext);
                   final XFile? image = await _picker.pickImage(
@@ -1071,7 +1103,7 @@ class _WalletPageState extends State<WalletPage> {
       );
       return;
     }
-    
+
     if (_ifscController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1081,7 +1113,7 @@ class _WalletPageState extends State<WalletPage> {
       );
       return;
     }
-    
+
     if (_accountController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

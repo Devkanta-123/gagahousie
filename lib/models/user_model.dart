@@ -54,11 +54,17 @@ class UserModel {
       id: json['id'],
       fullName: json['fullname'] ?? json['fullName'] ?? '',
       email: email,
-      phone: json['phone'] ?? json['mobileNumber'] ?? json['phone_no'] ?? json['mobile'] ?? '',
+      phone: json['phone'] ??
+          json['mobileNumber'] ??
+          json['phone_no'] ??
+          json['mobile'] ??
+          '',
       password: json['password'] ?? '',
       status: json['status'] ?? json['account_status'] ?? 'active',
       role: json['role'] ?? defaultRole,
-      createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
+      createdAt: json['created_at'] != null
+          ? DateTime.tryParse(json['created_at'].toString())
+          : null,
     );
   }
 

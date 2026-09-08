@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'providers/ticket_provider.dart';
 import 'services/supabase_service.dart';
 import 'utils/constants.dart';
 import 'screens/splash_screen.dart';
@@ -26,8 +27,11 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => AuthProvider(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => TicketProvider()..fetchTickets()),
+      ],
       child: MaterialApp(
         title: 'GaGa Housie',
         debugShowCheckedModeBanner: false,

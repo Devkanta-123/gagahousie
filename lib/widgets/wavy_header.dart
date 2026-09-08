@@ -77,7 +77,8 @@ class WavyBrandedHeader extends StatelessWidget {
                       Align(
                         alignment: Alignment.centerLeft,
                         child: GestureDetector(
-                          onTap: onBackPressed ?? () => Navigator.maybePop(context),
+                          onTap: onBackPressed ??
+                              () => Navigator.maybePop(context),
                           child: Container(
                             width: 38,
                             height: 38,
@@ -185,7 +186,8 @@ class WavyBrandedHeader extends StatelessWidget {
                       ),
                     ],
 
-                    if (demoCredential != null && demoCredential!.isNotEmpty) ...[
+                    if (demoCredential != null &&
+                        demoCredential!.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(

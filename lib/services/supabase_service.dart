@@ -66,14 +66,16 @@ class SupabaseService {
     debugPrint('🌐 [SUPABASE] Project URL: $url');
 
     if (!SupabaseConfig.isConfigured) {
-      debugPrint('⚠️ [SUPABASE NOTICE] Using placeholder Supabase credentials.');
+      debugPrint(
+          '⚠️ [SUPABASE NOTICE] Using placeholder Supabase credentials.');
       debugPrint('⚠️ To connect to your Supabase project, update:');
       debugPrint('⚠️   lib/services/supabase_config.dart');
       debugPrint('⚠️ (Login system is operational in demo/fallback mode).');
       debugPrint('==================================================');
       _isInitialized = false;
       _isConnected = false;
-      _lastConnectionMessage = 'Credentials not configured yet in supabase_config.dart';
+      _lastConnectionMessage =
+          'Credentials not configured yet in supabase_config.dart';
       return;
     }
 
@@ -100,7 +102,8 @@ class SupabaseService {
   /// Test connection to Supabase and verify the `user_auth` table
   Future<SupabaseConnectionResult> testConnection() async {
     if (!SupabaseConfig.isConfigured || !_isInitialized) {
-      const msg = 'Supabase credentials are not configured in supabase_config.dart';
+      const msg =
+          'Supabase credentials are not configured in supabase_config.dart';
       debugPrint('ℹ️ [SUPABASE STATUS] $msg');
       return SupabaseConnectionResult(
         success: false,
@@ -129,7 +132,8 @@ class SupabaseService {
       debugPrint('✅ [SUPABASE CONNECTION SUCCESSFUL]');
       debugPrint('✅ Successfully connected to Supabase for login system!');
       debugPrint('✅ Project URL: ${SupabaseConfig.activeUrl}');
-      debugPrint('✅ Authentication Table: "${SupabaseConfig.userAuthTable}" is verified & accessible.');
+      debugPrint(
+          '✅ Authentication Table: "${SupabaseConfig.userAuthTable}" is verified & accessible.');
       debugPrint('==================================================');
 
       return SupabaseConnectionResult(
@@ -150,8 +154,10 @@ class SupabaseService {
         debugPrint('🔌 [SUPABASE PROJECT CONNECTED]');
         debugPrint('⚠️ [TABLE NOT FOUND IN SCHEMA CACHE: PGRST205]');
         debugPrint('🌐 Connected to: ${SupabaseConfig.activeUrl}');
-        debugPrint('📋 The table "${SupabaseConfig.userAuthTable}" has not been created yet.');
-        debugPrint('👉 Please run supabase_schema.sql in your Supabase SQL Editor to create it.');
+        debugPrint(
+            '📋 The table "${SupabaseConfig.userAuthTable}" has not been created yet.');
+        debugPrint(
+            '👉 Please run supabase_schema.sql in your Supabase SQL Editor to create it.');
         debugPrint('==================================================');
         return SupabaseConnectionResult(
           success: true,
@@ -163,7 +169,8 @@ class SupabaseService {
 
       _isConnected = false;
       _lastConnectionMessage = 'Postgrest error (${pe.code}): ${pe.message}';
-      debugPrint('❌ [SUPABASE QUERY ERROR] Code: ${pe.code}, Details: ${pe.message}');
+      debugPrint(
+          '❌ [SUPABASE QUERY ERROR] Code: ${pe.code}, Details: ${pe.message}');
       return SupabaseConnectionResult(
         success: false,
         message: _lastConnectionMessage,
@@ -207,7 +214,8 @@ class SupabaseService {
     debugPrint('--------------------------------------------------');
     debugPrint('🔐 [SUPABASE LOGIN] Connection check for login system...');
     debugPrint('🔐 [SUPABASE LOGIN] Attempting login with: $trimmedIdentifier');
-    debugPrint('🔐 [SUPABASE LOGIN] Target Table: "${SupabaseConfig.userAuthTable}"');
+    debugPrint(
+        '🔐 [SUPABASE LOGIN] Target Table: "${SupabaseConfig.userAuthTable}"');
 
     // Strict DB Table Check
     if (!SupabaseConfig.isConfigured || !_isInitialized) {
@@ -232,18 +240,22 @@ class SupabaseService {
         query = query.eq(SupabaseConfig.colEmail, cleanEmail);
       }
 
-      final response = await query.eq(SupabaseConfig.colPassword, password).maybeSingle();
+      final response =
+          await query.eq(SupabaseConfig.colPassword, password).maybeSingle();
 
       if (response == null) {
-        debugPrint('❌ [SUPABASE LOGIN FAILED] No matching account found for: $trimmedIdentifier');
+        debugPrint(
+            '❌ [SUPABASE LOGIN FAILED] No matching account found for: $trimmedIdentifier');
         debugPrint('--------------------------------------------------');
-        throw const SupabaseAuthException('Invalid email/phone or password. Please check your credentials.');
+        throw const SupabaseAuthException(
+            'Invalid email/phone or password. Please check your credentials.');
       }
 
       final user = UserModel.fromJson(response);
       debugPrint('==================================================');
       debugPrint('✅ [SUPABASE LOGIN SUCCESSFUL]');
-      debugPrint('✅ Successfully authenticated user from "${SupabaseConfig.userAuthTable}"!');
+      debugPrint(
+          '✅ Successfully authenticated user from "${SupabaseConfig.userAuthTable}"!');
       debugPrint('✅ Full Name : ${user.fullName}');
       debugPrint('✅ Email     : ${user.email}');
       debugPrint('✅ Phone     : ${user.phone}');
@@ -252,7 +264,8 @@ class SupabaseService {
       debugPrint('==================================================');
 
       if (!user.isActive) {
-        debugPrint('⚠️ [SUPABASE LOGIN BLOCKED] Account status is "${user.status}" for $trimmedIdentifier');
+        debugPrint(
+            '⚠️ [SUPABASE LOGIN BLOCKED] Account status is "${user.status}" for $trimmedIdentifier');
         throw SupabaseAuthException(
           'Your account is currently ${user.status}. Please contact support.',
         );
@@ -260,14 +273,19 @@ class SupabaseService {
 
       return user;
     } on PostgrestException catch (pe) {
-      if (pe.code == 'PGRST205' || pe.message.contains('schema cache') || pe.message.contains('does not exist')) {
-        debugPrint('❌ [SUPABASE AUTH] Table "${SupabaseConfig.userAuthTable}" not found in schema cache (PGRST205).');
-        debugPrint('👉 Please execute supabase_schema.sql in your Supabase SQL Editor.');
+      if (pe.code == 'PGRST205' ||
+          pe.message.contains('schema cache') ||
+          pe.message.contains('does not exist')) {
+        debugPrint(
+            '❌ [SUPABASE AUTH] Table "${SupabaseConfig.userAuthTable}" not found in schema cache (PGRST205).');
+        debugPrint(
+            '👉 Please execute supabase_schema.sql in your Supabase SQL Editor.');
         throw const SupabaseAuthException(
           'Table "user_auth" does not exist in your Supabase database yet. Please run supabase_schema.sql in Supabase SQL Editor.',
         );
       }
-      debugPrint('❌ [SUPABASE POSTGREST ERROR] Code: ${pe.code}, Details: ${pe.message}');
+      debugPrint(
+          '❌ [SUPABASE POSTGREST ERROR] Code: ${pe.code}, Details: ${pe.message}');
       throw SupabaseAuthException('Database error: ${pe.message}');
     } on SupabaseAuthException {
       rethrow;
@@ -303,7 +321,8 @@ class SupabaseService {
     final cleanPhone = AuthValidator.cleanPhone(phone);
 
     debugPrint('--------------------------------------------------');
-    debugPrint('📝 [SUPABASE REGISTER] Starting registration in table "${SupabaseConfig.userAuthTable}"...');
+    debugPrint(
+        '📝 [SUPABASE REGISTER] Starting registration in table "${SupabaseConfig.userAuthTable}"...');
     debugPrint('📝 [SUPABASE REGISTER] Name : $cleanName');
     debugPrint('📝 [SUPABASE REGISTER] Email: $cleanEmail');
     debugPrint('📝 [SUPABASE REGISTER] Phone: $cleanPhone (10 digits)');
@@ -330,8 +349,10 @@ class SupabaseService {
           .maybeSingle();
 
       if (existingEmail != null) {
-        debugPrint('⚠️ [SUPABASE REGISTER] Email already registered: $cleanEmail');
-        throw const SupabaseAuthException('An account with this email address already exists.');
+        debugPrint(
+            '⚠️ [SUPABASE REGISTER] Email already registered: $cleanEmail');
+        throw const SupabaseAuthException(
+            'An account with this email address already exists.');
       }
 
       // 3. Check if phone already exists
@@ -342,8 +363,10 @@ class SupabaseService {
           .maybeSingle();
 
       if (existingPhone != null) {
-        debugPrint('⚠️ [SUPABASE REGISTER] Phone already registered: $cleanPhone');
-        throw const SupabaseAuthException('An account with this 10-digit mobile number already exists.');
+        debugPrint(
+            '⚠️ [SUPABASE REGISTER] Phone already registered: $cleanPhone');
+        throw const SupabaseAuthException(
+            'An account with this 10-digit mobile number already exists.');
       }
 
       // 4. Insert row into `user_auth` table
@@ -366,7 +389,8 @@ class SupabaseService {
 
       debugPrint('==================================================');
       debugPrint('✅ [SUPABASE REGISTER SUCCESSFUL]');
-      debugPrint('✅ Successfully inserted new user into "${SupabaseConfig.userAuthTable}"!');
+      debugPrint(
+          '✅ Successfully inserted new user into "${SupabaseConfig.userAuthTable}"!');
       debugPrint('✅ Full Name : ${newUser.fullName}');
       debugPrint('✅ Email     : ${newUser.email}');
       debugPrint('✅ Phone     : ${newUser.phone}');
@@ -376,15 +400,21 @@ class SupabaseService {
 
       return newUser;
     } on PostgrestException catch (pe) {
-      if (pe.code == 'PGRST205' || pe.message.contains('schema cache') || pe.message.contains('does not exist')) {
-        debugPrint('❌ [SUPABASE REGISTER] Table "${SupabaseConfig.userAuthTable}" not found in schema cache (PGRST205).');
-        debugPrint('👉 Please execute supabase_schema.sql in your Supabase SQL Editor.');
+      if (pe.code == 'PGRST205' ||
+          pe.message.contains('schema cache') ||
+          pe.message.contains('does not exist')) {
+        debugPrint(
+            '❌ [SUPABASE REGISTER] Table "${SupabaseConfig.userAuthTable}" not found in schema cache (PGRST205).');
+        debugPrint(
+            '👉 Please execute supabase_schema.sql in your Supabase SQL Editor.');
         throw const SupabaseAuthException(
           'Table "user_auth" does not exist in your Supabase database yet. Please run supabase_schema.sql in Supabase SQL Editor.',
         );
       }
-      debugPrint('❌ [SUPABASE INSERT ERROR] Code: ${pe.code}, Details: ${pe.message}');
-      throw SupabaseAuthException('Database registration failed: ${pe.message}');
+      debugPrint(
+          '❌ [SUPABASE INSERT ERROR] Code: ${pe.code}, Details: ${pe.message}');
+      throw SupabaseAuthException(
+          'Database registration failed: ${pe.message}');
     } on SupabaseAuthException {
       rethrow;
     } catch (e) {

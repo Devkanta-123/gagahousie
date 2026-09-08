@@ -31,10 +31,12 @@ class _LoginScreenState extends State<LoginScreen> {
   void _checkConnectionStatus() async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
     debugPrint('--------------------------------------------------');
-    debugPrint('🔍 [LOGIN SCREEN] Checking Supabase connection for login system...');
+    debugPrint(
+        '🔍 [LOGIN SCREEN] Checking Supabase connection for login system...');
     final result = await auth.checkSupabaseConnection();
     if (result.success) {
-      debugPrint('✅ [LOGIN SCREEN] Supabase connection is active & ready for authentication!');
+      debugPrint(
+          '✅ [LOGIN SCREEN] Supabase connection is active & ready for authentication!');
     } else {
       debugPrint('ℹ️ [LOGIN SCREEN] Supabase status: ${result.message}');
     }
@@ -84,7 +86,8 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     if (success) {
-      debugPrint('🎉 [LOGIN SYSTEM] Login SUCCESSFUL for $identifier! Redirecting to Home...');
+      debugPrint(
+          '🎉 [LOGIN SYSTEM] Login SUCCESSFUL for $identifier! Redirecting to Home...');
       debugPrint('==================================================');
       _showSnackBar('Login successful! Welcome back.');
       Navigator.pushReplacementNamed(context, '/home');
@@ -125,7 +128,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
             // Form inputs & actions
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -135,7 +139,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       final isConnected = auth.isSupabaseConnected;
                       return Container(
                         margin: const EdgeInsets.only(bottom: 16),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
                         decoration: BoxDecoration(
                           color: isConnected
                               ? const Color(0xFFE8F5E9)
@@ -150,9 +155,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: Row(
                           children: [
                             Icon(
-                              isConnected ? Icons.cloud_done_rounded : Icons.cloud_queue_rounded,
+                              isConnected
+                                  ? Icons.cloud_done_rounded
+                                  : Icons.cloud_queue_rounded,
                               size: 18,
-                              color: isConnected ? const Color(0xFF2E7D32) : const Color(0xFFF57F17),
+                              color: isConnected
+                                  ? const Color(0xFF2E7D32)
+                                  : const Color(0xFFF57F17),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
@@ -163,7 +172,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
-                                  color: isConnected ? const Color(0xFF2E7D32) : const Color(0xFFE65100),
+                                  color: isConnected
+                                      ? const Color(0xFF2E7D32)
+                                      : const Color(0xFFE65100),
                                 ),
                               ),
                             ),
@@ -171,13 +182,16 @@ class _LoginScreenState extends State<LoginScreen> {
                               onTap: _checkConnectionStatus,
                               borderRadius: BorderRadius.circular(8),
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
                                 child: Text(
                                   'Test',
                                   style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.bold,
-                                    color: isConnected ? const Color(0xFF1B5E20) : const Color(0xFFBF360C),
+                                    color: isConnected
+                                        ? const Color(0xFF1B5E20)
+                                        : const Color(0xFFBF360C),
                                     decoration: TextDecoration.underline,
                                   ),
                                 ),

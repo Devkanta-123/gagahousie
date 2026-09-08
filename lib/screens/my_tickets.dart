@@ -81,7 +81,8 @@ class MyTicketsPage extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2.5),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 2.5),
                   decoration: BoxDecoration(
                     color: AppColors.primaryGreen.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(12),
@@ -220,7 +221,8 @@ class MyTicketsPage extends StatelessWidget {
                       const SizedBox(width: 5),
                       Flexible(
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1.5),
                           decoration: BoxDecoration(
                             color: const Color(0xFFF1F5F9),
                             borderRadius: BorderRadius.circular(5),
@@ -303,7 +305,8 @@ class MyTicketsPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
                     color: AppColors.primaryGreen.withOpacity(0.10),
                     borderRadius: BorderRadius.circular(8),

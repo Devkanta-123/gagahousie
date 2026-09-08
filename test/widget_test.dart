@@ -16,7 +16,10 @@ import 'package:gaga_housie/screens/splash_screen.dart';
 import 'package:gaga_housie/screens/ticket_details.dart';
 import 'package:gaga_housie/screens/ticket_purchase_page.dart';
 import 'package:gaga_housie/screens/qr_scanner_page.dart';
+import 'package:gaga_housie/screens/admin_tickets_tab.dart';
+import 'package:gaga_housie/models/ticket_model.dart';
 import 'package:gaga_housie/providers/auth_provider.dart';
+import 'package:gaga_housie/providers/ticket_provider.dart';
 import 'package:gaga_housie/widgets/gaga_app_header.dart';
 import 'package:gaga_housie/widgets/gaga_header.dart';
 import 'package:gaga_housie/utils/constants.dart';
@@ -771,6 +774,138 @@ void main() {
       expect(find.text('Ticket ID:'), findsOneWidget);
       expect(find.text('GH-987654'), findsOneWidget);
       expect(find.text('₹20.00'), findsOneWidget);
+    });
+  });
+
+  group('AdminTicketsTab Ticket ID Search Filter Tests', () {
+    Widget createAdminTicketsApp({List<TicketModel>? customTickets}) {
+      final ticketProvider = TicketProvider();
+      ticketProvider.setTickets(customTickets ?? [
+        TicketModel(
+          ticketId: 'GAGA26000001',
+          ticketTitle: 'Morning Draw #1',
+          drawDate: '25/09/2026',
+          drawTime: '10:00 AM',
+          price: '₹20',
+          totalPrize: '₹75000',
+          status: 'Active',
+          prizes: TicketModel.defaultPrizes(),
+        ),
+        TicketModel(
+          ticketId: 'GAGA26000002',
+          ticketTitle: 'Evening Draw #2',
+          drawDate: '25/09/2026',
+          drawTime: '08:00 PM',
+          price: '₹50',
+          totalPrize: '₹150000',
+          status: 'Active',
+          prizes: TicketModel.defaultPrizes(),
+        ),
+        TicketModel(
+          ticketId: 'TKT-99999',
+          ticketTitle: 'Midnight Bumper',
+          drawDate: '26/09/2026',
+          drawTime: '11:59 PM',
+          price: '₹100',
+          totalPrize: '₹300000',
+          status: 'Active',
+          prizes: TicketModel.defaultPrizes(),
+        ),
+      ]);
+
+      return MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => AuthProvider()),
+          ChangeNotifierProvider.value(value: ticketProvider),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: AdminTicketsTab(),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('renders Ticket ID search filter bar with badge and placeholder',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(createAdminTicketsApp());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Published Draw Tickets'), findsOneWidget);
+      expect(find.text('TICKET ID'), findsOneWidget);
+      expect(find.text('Search by Ticket ID (e.g. GAGA26000001)...'), findsOneWidget);
+      expect(find.text('3 in DB • Page 1 of 1'), findsOneWidget);
+    });
+
+    testWidgets('filters tickets by ticket ID in real time and highlights matched ticket',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(createAdminTicketsApp());
+      await tester.pumpAndSettle();
+
+      expect(find.text('GAGA26000001'), findsOneWidget);
+      expect(find.text('GAGA26000002'), findsOneWidget);
+      expect(find.text('TKT-99999'), findsOneWidget);
+
+      final searchInput = find.widgetWithText(TextField, 'Search by Ticket ID (e.g. GAGA26000001)...');
+      await tester.enterText(searchInput, '000002');
+      await tester.pumpAndSettle();
+
+      // Only GAGA26000002 should remain
+      expect(find.text('GAGA26000002'), findsOneWidget);
+      expect(find.text('GAGA26000001'), findsNothing);
+      expect(find.text('TKT-99999'), findsNothing);
+
+      // Verify active filter indicators
+      expect(find.text('1 found • Page 1 of 1'), findsOneWidget);
+      expect(find.text('Filtering by Ticket ID: "000002"'), findsOneWidget);
+      expect(find.text('(1 match)'), findsOneWidget);
+      expect(find.text('Clear Filter'), findsOneWidget);
+    });
+
+    testWidgets('clearing search filter restores full list of tickets',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(createAdminTicketsApp());
+      await tester.pumpAndSettle();
+
+      final searchInput = find.widgetWithText(TextField, 'Search by Ticket ID (e.g. GAGA26000001)...');
+      await tester.enterText(searchInput, 'TKT-99999');
+      await tester.pumpAndSettle();
+
+      final listViewFinder = find.byType(ListView);
+      expect(find.descendant(of: listViewFinder, matching: find.text('TKT-99999')), findsOneWidget);
+      expect(find.descendant(of: listViewFinder, matching: find.text('GAGA26000001')), findsNothing);
+
+      // Tap 'Clear Filter'
+      await tester.tap(find.text('Clear Filter'));
+      await tester.pumpAndSettle();
+
+      // All tickets restored
+      expect(find.descendant(of: listViewFinder, matching: find.text('GAGA26000001')), findsOneWidget);
+      expect(find.descendant(of: listViewFinder, matching: find.text('GAGA26000002')), findsOneWidget);
+      expect(find.descendant(of: listViewFinder, matching: find.text('TKT-99999')), findsOneWidget);
+      expect(find.text('3 in DB • Page 1 of 1'), findsOneWidget);
+    });
+
+    testWidgets('displays dedicated empty state when no tickets match the searched Ticket ID',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(createAdminTicketsApp());
+      await tester.pumpAndSettle();
+
+      final searchInput = find.widgetWithText(TextField, 'Search by Ticket ID (e.g. GAGA26000001)...');
+      await tester.enterText(searchInput, 'NON_EXISTENT_ID');
+      await tester.pumpAndSettle();
+
+      expect(find.text('No Matching Tickets Found'), findsOneWidget);
+      expect(find.textContaining('No published ticket matches Ticket ID "NON_EXISTENT_ID"'), findsOneWidget);
+      expect(find.text('Reset Search Filter'), findsOneWidget);
+
+      // Tapping Reset Search Filter resets the search
+      await tester.tap(find.text('Reset Search Filter'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No Matching Tickets Found'), findsNothing);
+      expect(find.text('GAGA26000001'), findsOneWidget);
+      expect(find.text('3 in DB • Page 1 of 1'), findsOneWidget);
     });
   });
 }

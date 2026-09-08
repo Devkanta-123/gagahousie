@@ -5,14 +5,14 @@ class WinnerCard extends StatelessWidget {
   final String winnerName;
   final String date;
   final int index;
-  
+
   const WinnerCard({
     super.key,
     required this.winnerName,
     required this.date,
     required this.index,
   });
-  
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -28,7 +28,8 @@ class WinnerCard extends StatelessWidget {
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: AppColors.primaryGreen.withOpacity(0.2),
-          child: Icon(Icons.emoji_events, color: AppColors.primaryGreen, size: 20),
+          child:
+              Icon(Icons.emoji_events, color: AppColors.primaryGreen, size: 20),
         ),
         title: Text(
           winnerName,

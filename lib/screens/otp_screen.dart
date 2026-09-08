@@ -108,7 +108,8 @@ class _OTPScreenState extends State<OTPScreen> {
 
             // OTP Content
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -273,7 +274,9 @@ class _OTPScreenState extends State<OTPScreen> {
               });
             },
             icon: Icon(
-              _isOtpVisible ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+              _isOtpVisible
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
               color: AppColors.primaryGreen.withOpacity(0.75),
               size: 20,
             ),

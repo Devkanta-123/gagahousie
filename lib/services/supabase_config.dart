@@ -8,13 +8,15 @@ class SupabaseConfig {
   /// Supabase Project URL (e.g., https://your-project-id.supabase.co)
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://jwprioijhxyhqmfhqdng.supabase.co', // Replace with your Supabase Project URL
+    defaultValue:
+        'https://jwprioijhxyhqmfhqdng.supabase.co', // Replace with your Supabase Project URL
   );
 
   /// Supabase Public Anon Key
   static const String supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: 'sb_publishable_aQ2pKZfHTUY0Mp-3MCetGA_XmiYjZOv', // Replace with your Supabase Anon Key
+    defaultValue:
+        'sb_publishable_aQ2pKZfHTUY0Mp-3MCetGA_XmiYjZOv', // Replace with your Supabase Anon Key
   );
 
   /// Database Table Name for Authentication

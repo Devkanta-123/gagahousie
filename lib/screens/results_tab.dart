@@ -6,16 +6,66 @@ class ResultsTab extends StatelessWidget {
   const ResultsTab({super.key});
 
   final List<Map<String, String>> results = const [
-    {'game': 'Game #1234', 'prize': '₹100', 'date': '20/09/2023', 'winner': 'Winner 1'},
-    {'game': 'Game #1233', 'prize': '₹50', 'date': '19/09/2023', 'winner': 'Winner 2'},
-    {'game': 'Game #1232', 'prize': '₹200', 'date': '18/09/2023', 'winner': 'Winner 3'},
-    {'game': 'Game #1231', 'prize': '₹75', 'date': '17/09/2023', 'winner': 'Winner 4'},
-    {'game': 'Game #1230', 'prize': '₹150', 'date': '16/09/2023', 'winner': 'Winner 5'},
-    {'game': 'Game #1229', 'prize': '₹90', 'date': '15/09/2023', 'winner': 'Winner 6'},
-    {'game': 'Game #1228', 'prize': '₹120', 'date': '14/09/2023', 'winner': 'Winner 7'},
-    {'game': 'Game #1227', 'prize': '₹80', 'date': '13/09/2023', 'winner': 'Winner 8'},
-    {'game': 'Game #1226', 'prize': '₹60', 'date': '12/09/2023', 'winner': 'Winner 9'},
-    {'game': 'Game #1225', 'prize': '₹250', 'date': '11/09/2023', 'winner': 'Winner 10'},
+    {
+      'game': 'Game #1234',
+      'prize': '₹100',
+      'date': '20/09/2023',
+      'winner': 'Winner 1'
+    },
+    {
+      'game': 'Game #1233',
+      'prize': '₹50',
+      'date': '19/09/2023',
+      'winner': 'Winner 2'
+    },
+    {
+      'game': 'Game #1232',
+      'prize': '₹200',
+      'date': '18/09/2023',
+      'winner': 'Winner 3'
+    },
+    {
+      'game': 'Game #1231',
+      'prize': '₹75',
+      'date': '17/09/2023',
+      'winner': 'Winner 4'
+    },
+    {
+      'game': 'Game #1230',
+      'prize': '₹150',
+      'date': '16/09/2023',
+      'winner': 'Winner 5'
+    },
+    {
+      'game': 'Game #1229',
+      'prize': '₹90',
+      'date': '15/09/2023',
+      'winner': 'Winner 6'
+    },
+    {
+      'game': 'Game #1228',
+      'prize': '₹120',
+      'date': '14/09/2023',
+      'winner': 'Winner 7'
+    },
+    {
+      'game': 'Game #1227',
+      'prize': '₹80',
+      'date': '13/09/2023',
+      'winner': 'Winner 8'
+    },
+    {
+      'game': 'Game #1226',
+      'prize': '₹60',
+      'date': '12/09/2023',
+      'winner': 'Winner 9'
+    },
+    {
+      'game': 'Game #1225',
+      'prize': '₹250',
+      'date': '11/09/2023',
+      'winner': 'Winner 10'
+    },
   ];
 
   @override
@@ -69,7 +119,8 @@ class ResultsTab extends StatelessWidget {
 
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: AppDimens.paddingLarge),
+            padding:
+                const EdgeInsets.symmetric(horizontal: AppDimens.paddingLarge),
             itemCount: results.length,
             itemBuilder: (context, index) {
               return _buildResultCard(results[index]);

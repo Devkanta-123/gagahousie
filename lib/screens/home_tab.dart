@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/ticket_provider.dart';
 import '../utils/constants.dart';
 import 'draw_page.dart';
 import 'my_tickets.dart';
@@ -130,29 +132,55 @@ class _HomeTabState extends State<HomeTab> {
     }
   ];
 
+  List<Map<String, dynamic>> _getActiveUpcomingTickets() {
+    try {
+      final provider = Provider.of<TicketProvider>(context);
+      final list = provider.upcomingTicketsMap;
+      if (list.isNotEmpty) {
+        return list;
+      }
+    } catch (_) {
+      // Fallback if TicketProvider is not in the widget tree
+    }
+    return upcomingTickets;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Integrated GaGa Housie Header with Balance + Wallet + Recharge
-          const GaGaAppHeader(
-            compact: true,
-            showBalance: true,
-            balance: 1000.00,
-            showRechargeButton: true,
-          ),
+    final activeUpcoming = _getActiveUpcomingTickets();
 
-          // Three Action Buttons - Rounded & Colorful
-          _buildActionButtons(),
+    return RefreshIndicator(
+      color: AppColors.primaryGreen,
+      onRefresh: () async {
+        try {
+          await Provider.of<TicketProvider>(context, listen: false)
+              .fetchTickets();
+        } catch (_) {}
+      },
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics()),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Integrated GaGa Housie Header with Balance + Wallet + Recharge
+            const GaGaAppHeader(
+              compact: true,
+              showBalance: true,
+              balance: 1000.00,
+              showRechargeButton: true,
+            ),
 
-          // Upcoming Tickets - Slider with Arrows (Rectangular & Compact)
-          _buildUpcomingTicketsSlider(),
+            // Three Action Buttons - Rounded & Colorful
+            _buildActionButtons(),
 
-          // Winners Section - Slider with Arrows (Rectangular & Compact)
-          _buildWinnersSection(),
-        ],
+            // Upcoming Tickets - Slider with Arrows (Rectangular & Compact)
+            _buildUpcomingTicketsSlider(activeUpcoming),
+
+            // Winners Section - Slider with Arrows (Rectangular & Compact)
+            _buildWinnersSection(),
+          ],
+        ),
       ),
     );
   }
@@ -389,8 +417,8 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  Widget _buildUpcomingTicketsSlider() {
-    final int totalTickets = upcomingTickets.length;
+  Widget _buildUpcomingTicketsSlider(List<Map<String, dynamic>> activeTickets) {
+    final int totalTickets = activeTickets.length;
     final int totalVirtualPages = totalTickets * _loopMultiplier;
 
     return Column(
@@ -504,18 +532,21 @@ class _HomeTabState extends State<HomeTab> {
                               padEnds: true,
                               onPageChanged: (page) {
                                 setState(() {
-                                  _currentTicketPage = page % totalTickets;
+                                  _currentTicketPage = totalTickets > 0
+                                      ? page % totalTickets
+                                      : 0;
                                 });
                               },
                               itemBuilder: (context, index) {
-                                final int actualIndex = index % totalTickets;
+                                final int actualIndex =
+                                    totalTickets > 0 ? index % totalTickets : 0;
                                 return Padding(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 5,
                                     vertical: 3,
                                   ),
                                   child: _buildUpcomingTicketCard(
-                                    ticket: upcomingTickets[actualIndex],
+                                    ticket: activeTickets[actualIndex],
                                     index: actualIndex,
                                   ),
                                 );
@@ -711,9 +742,8 @@ class _HomeTabState extends State<HomeTab> {
                             ? AppColors.primaryGreen
                             : const Color(0xFF2D4A3E),
                         fontSize: 8.5,
-                        fontWeight: isTopPrize
-                            ? FontWeight.w600
-                            : FontWeight.normal,
+                        fontWeight:
+                            isTopPrize ? FontWeight.w600 : FontWeight.normal,
                       ),
                     ),
                   ),
@@ -957,7 +987,8 @@ class _HomeTabState extends State<HomeTab> {
                                 Text(
                                   "📅 ${ticket['date'] ?? ''}",
                                   style: TextStyle(
-                                    color: AppColors.primaryGreen.withOpacity(0.85),
+                                    color: AppColors.primaryGreen
+                                        .withOpacity(0.85),
                                     fontSize: 8.5,
                                     fontWeight: FontWeight.w500,
                                   ),
@@ -966,7 +997,8 @@ class _HomeTabState extends State<HomeTab> {
                                 Text(
                                   "⏰ ${ticket['time'] ?? ''}",
                                   style: TextStyle(
-                                    color: AppColors.primaryGreen.withOpacity(0.85),
+                                    color: AppColors.primaryGreen
+                                        .withOpacity(0.85),
                                     fontSize: 8.5,
                                     fontWeight: FontWeight.w500,
                                   ),

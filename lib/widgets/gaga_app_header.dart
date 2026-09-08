@@ -127,7 +127,8 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
               children: [
                 if (widget.showBackButton)
                   GestureDetector(
-                    onTap: widget.onBackPressed ?? () => Navigator.maybePop(context),
+                    onTap: widget.onBackPressed ??
+                        () => Navigator.maybePop(context),
                     child: Container(
                       width: 38,
                       height: 38,
@@ -275,7 +276,8 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                 // Notification Bell Icon with Badge
                 if (widget.showNotification)
                   GestureDetector(
-                    onTap: widget.onNotificationTap ?? () => _showNotificationSheet(context),
+                    onTap: widget.onNotificationTap ??
+                        () => _showNotificationSheet(context),
                     child: Container(
                       width: 38,
                       height: 38,
@@ -519,7 +521,8 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
               height: MediaQuery.of(context).size.height * 0.65,
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.88),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(26)),
                 border: Border.all(
                   color: Colors.white.withOpacity(0.9),
                   width: 1.5,
@@ -624,25 +627,29 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                   Expanded(
                     child: ListView(
                       physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
                       children: [
                         _buildGlassNotificationCard(
                           title: 'Housefull Winner #1234!',
-                          message: 'Congratulations Winner 1 on winning ₹100 prize.',
+                          message:
+                              'Congratulations Winner 1 on winning ₹100 prize.',
                           time: '12m ago',
                           icon: Icons.emoji_events_rounded,
                           iconColor: AppColors.primaryGreen,
                         ),
                         _buildGlassNotificationCard(
                           title: 'Live Tambola Draw Starting',
-                          message: 'Game #1235 is live now! Join before round starts.',
+                          message:
+                              'Game #1235 is live now! Join before round starts.',
                           time: '45m ago',
                           icon: Icons.play_circle_fill_rounded,
                           iconColor: const Color(0xFF00B894),
                         ),
                         _buildGlassNotificationCard(
                           title: 'Wallet Recharged',
-                          message: '₹1,000.00 was successfully added to your account.',
+                          message:
+                              '₹1,000.00 was successfully added to your account.',
                           time: 'Yesterday',
                           icon: Icons.account_balance_wallet_rounded,
                           iconColor: AppColors.primaryGreen,
@@ -752,10 +759,30 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
     if (query.trim().isEmpty) return;
 
     final mockResults = [
-      {'title': 'Ticket #001', 'type': 'Live Ticket', 'price': '₹100', 'desc': 'Draw at 07:00 PM'},
-      {'title': 'Ticket #002', 'type': 'Live Ticket', 'price': '₹50', 'desc': 'Draw at 07:30 PM'},
-      {'title': 'Game #1234', 'type': 'Draw Game', 'price': '₹100 Prize', 'desc': 'Completed round'},
-      {'title': 'Game #1235', 'type': 'Active Draw', 'price': '₹250 Prize', 'desc': 'Starting soon'},
+      {
+        'title': 'Ticket #001',
+        'type': 'Live Ticket',
+        'price': '₹100',
+        'desc': 'Draw at 07:00 PM'
+      },
+      {
+        'title': 'Ticket #002',
+        'type': 'Live Ticket',
+        'price': '₹50',
+        'desc': 'Draw at 07:30 PM'
+      },
+      {
+        'title': 'Game #1234',
+        'type': 'Draw Game',
+        'price': '₹100 Prize',
+        'desc': 'Completed round'
+      },
+      {
+        'title': 'Game #1235',
+        'type': 'Active Draw',
+        'price': '₹250 Prize',
+        'desc': 'Starting soon'
+      },
     ].where((item) {
       final q = query.toLowerCase();
       return item['title']!.toLowerCase().contains(q) ||
@@ -776,7 +803,8 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
               height: MediaQuery.of(context).size.height * 0.58,
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.92),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(26)),
                 border: Border.all(
                   color: Colors.white.withOpacity(0.9),
                   width: 1.5,
@@ -816,7 +844,8 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
                           color: AppColors.primaryGreen.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(10),
@@ -873,7 +902,8 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: AppColors.primaryGreen.withOpacity(0.04),
+                                  color:
+                                      AppColors.primaryGreen.withOpacity(0.04),
                                   blurRadius: 6,
                                   offset: const Offset(0, 2),
                                 ),
@@ -884,7 +914,8 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                                 Container(
                                   padding: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(
-                                    color: AppColors.primaryGreen.withOpacity(0.12),
+                                    color: AppColors.primaryGreen
+                                        .withOpacity(0.12),
                                     shape: BoxShape.circle,
                                   ),
                                   child: const Icon(
@@ -896,7 +927,8 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         item['title']!,

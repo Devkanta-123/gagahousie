@@ -41,7 +41,8 @@ class _SplashScreenState extends State<SplashScreen>
     _animController.forward();
 
     // Smooth navigation after splash display
-    _navigationTimer = Timer(const Duration(milliseconds: 2200), _handleNavigation);
+    _navigationTimer =
+        Timer(const Duration(milliseconds: 2200), _handleNavigation);
   }
 
   void _handleNavigation() {

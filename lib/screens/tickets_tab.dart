@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/ticket_provider.dart';
 import '../utils/constants.dart';
 import 'ticket_selection_page.dart';
 import '../widgets/gaga_app_header.dart';
@@ -7,18 +9,77 @@ class TicketsTab extends StatelessWidget {
   const TicketsTab({super.key});
 
   final List<Map<String, String>> tickets = const [
-    {'ticket': 'Ticket #001', 'date': '25/09/2023', 'price': '₹10', 'status': 'Active', 'id': 'TKT001'},
-    {'ticket': 'Ticket #002', 'date': '25/09/2023', 'price': '₹10', 'status': 'Active', 'id': 'TKT002'},
-    {'ticket': 'Ticket #003', 'date': '26/09/2023', 'price': '₹15', 'status': 'Active', 'id': 'TKT003'},
-    {'ticket': 'Ticket #004', 'date': '26/09/2023', 'price': '₹15', 'status': 'Active', 'id': 'TKT004'},
-    {'ticket': 'Ticket #005', 'date': '27/09/2023', 'price': '₹20', 'status': 'Active', 'id': 'TKT005'},
-    {'ticket': 'Ticket #006', 'date': '27/09/2023', 'price': '₹20', 'status': 'Active', 'id': 'TKT006'},
-    {'ticket': 'Ticket #007', 'date': '28/09/2023', 'price': '₹25', 'status': 'Active', 'id': 'TKT007'},
-    {'ticket': 'Ticket #008', 'date': '28/09/2023', 'price': '₹25', 'status': 'Active', 'id': 'TKT008'},
+    {
+      'ticket': 'Ticket #001',
+      'date': '25/09/2023',
+      'price': '₹10',
+      'status': 'Active',
+      'id': 'TKT001'
+    },
+    {
+      'ticket': 'Ticket #002',
+      'date': '25/09/2023',
+      'price': '₹10',
+      'status': 'Active',
+      'id': 'TKT002'
+    },
+    {
+      'ticket': 'Ticket #003',
+      'date': '26/09/2023',
+      'price': '₹15',
+      'status': 'Active',
+      'id': 'TKT003'
+    },
+    {
+      'ticket': 'Ticket #004',
+      'date': '26/09/2023',
+      'price': '₹15',
+      'status': 'Active',
+      'id': 'TKT004'
+    },
+    {
+      'ticket': 'Ticket #005',
+      'date': '27/09/2023',
+      'price': '₹20',
+      'status': 'Active',
+      'id': 'TKT005'
+    },
+    {
+      'ticket': 'Ticket #006',
+      'date': '27/09/2023',
+      'price': '₹20',
+      'status': 'Active',
+      'id': 'TKT006'
+    },
+    {
+      'ticket': 'Ticket #007',
+      'date': '28/09/2023',
+      'price': '₹25',
+      'status': 'Active',
+      'id': 'TKT007'
+    },
+    {
+      'ticket': 'Ticket #008',
+      'date': '28/09/2023',
+      'price': '₹25',
+      'status': 'Active',
+      'id': 'TKT008'
+    },
   ];
 
   @override
   Widget build(BuildContext context) {
+    List<Map<String, String>> displayTickets = tickets;
+    TicketProvider? provider;
+    try {
+      provider = Provider.of<TicketProvider>(context);
+      if (provider.liveTicketsMap.isNotEmpty) {
+        displayTickets = provider.liveTicketsMap;
+      }
+    } catch (_) {
+      // Fallback if TicketProvider is not in tree
+    }
+
     return Column(
       children: [
         // Reusable Branded Header with integrated balance card
@@ -57,7 +118,7 @@ class TicketsTab extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  '${tickets.length} Active',
+                  '${displayTickets.length} Active',
                   style: const TextStyle(
                     color: AppColors.primaryGreen,
                     fontSize: 10.5,
@@ -70,24 +131,36 @@ class TicketsTab extends StatelessWidget {
         ),
 
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: AppDimens.paddingLarge),
-            itemCount: tickets.length,
-            itemBuilder: (context, index) {
-              return GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => TicketSelectionPage(
-                        ticket: tickets[index],
-                      ),
-                    ),
-                  );
-                },
-                child: _buildTicketCard(tickets[index]),
-              );
+          child: RefreshIndicator(
+            color: AppColors.primaryGreen,
+            onRefresh: () async {
+              if (provider != null) {
+                await provider.fetchTickets();
+              }
             },
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics(),
+              ),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppDimens.paddingLarge),
+              itemCount: displayTickets.length,
+              itemBuilder: (context, index) {
+                return GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => TicketSelectionPage(
+                          ticket: displayTickets[index],
+                        ),
+                      ),
+                    );
+                  },
+                  child: _buildTicketCard(displayTickets[index]),
+                );
+              },
+            ),
           ),
         ),
       ],

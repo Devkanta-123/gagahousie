@@ -4,12 +4,12 @@ import '../utils/constants.dart';
 class InputField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
-  final IconData? icon;  // Made icon optional
+  final IconData? icon; // Made icon optional
   final TextInputType keyboardType;
   final bool obscureText;
   final Widget? suffixIcon;
   final int? maxLength;
-  
+
   const InputField({
     super.key,
     required this.controller,
@@ -20,15 +20,15 @@ class InputField extends StatelessWidget {
     this.suffixIcon,
     this.maxLength,
   });
-  
+
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.glass,  // Changed to glass effect
+        color: AppColors.glass, // Changed to glass effect
         borderRadius: BorderRadius.circular(AppDimens.borderRadiusMedium),
         border: Border.all(
-          color: AppColors.glassBorder,  // Added green glass border
+          color: AppColors.glassBorder, // Added green glass border
           width: 1,
         ),
       ),
@@ -40,9 +40,11 @@ class InputField extends StatelessWidget {
         style: const TextStyle(color: AppColors.white),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: TextStyle(color: AppColors.hint),  // Updated to use hint color
-          prefixIcon: icon != null 
-              ? Icon(icon, color: AppColors.primaryGreen)  // Changed to green color
+          hintStyle:
+              TextStyle(color: AppColors.hint), // Updated to use hint color
+          prefixIcon: icon != null
+              ? Icon(icon,
+                  color: AppColors.primaryGreen) // Changed to green color
               : null,
           suffixIcon: suffixIcon,
           counterText: '',

@@ -7,6 +7,8 @@ import 'home_tab.dart';
 import 'tickets_tab.dart';
 import 'results_tab.dart';
 import 'profile_tab.dart';
+import 'admin_home_tab.dart';
+import 'admin_tickets_tab.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,24 +19,29 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
-  
-  // 4 Tabs: Alerts/History removed from bottom toggle (now accessible via Header Notification Bell)
-  final List<Widget> _tabs = [
-    const HomeTab(),
-    const TicketsTab(),
-    const ResultsTab(),
-    const ProfileTab(),
-  ];
-  
+
   @override
   Widget build(BuildContext context) {
+    final auth = Provider.of<AuthProvider>(context);
+    final isAdmin = auth.isAdmin;
+
+    // Role-based landing tabs: Admin sees AdminHomeTab and AdminTicketsTab;
+    // Regular users see standard HomeTab and TicketsTab.
+    // Bottom navigation toggle bar remains identical.
+    final List<Widget> tabs = [
+      isAdmin ? const AdminHomeTab() : const HomeTab(),
+      isAdmin ? const AdminTicketsTab() : const TicketsTab(),
+      const ResultsTab(),
+      const ProfileTab(),
+    ];
+
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: _tabs[_currentIndex],
+      body: tabs[_currentIndex],
       bottomNavigationBar: _buildWaterGridToggleBar(),
     );
   }
-  
+
   /// Water Grid Effects & Fluid Animated Toggle Bottom Navigation Bar
   Widget _buildWaterGridToggleBar() {
     final navItems = [
@@ -92,7 +99,8 @@ class _HomeScreenState extends State<HomeScreen> {
               final double pillWidth = (itemWidth * 0.88).clamp(56.0, 78.0);
               const double pillHeight = 48.0;
               final double pillTop = (constraints.maxHeight - pillHeight) / 2;
-              final double pillLeft = (_currentIndex * itemWidth) + (itemWidth - pillWidth) / 2;
+              final double pillLeft =
+                  (_currentIndex * itemWidth) + (itemWidth - pillWidth) / 2;
 
               return Stack(
                 children: [
@@ -185,7 +193,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     shadows: isSelected
                                         ? [
                                             BoxShadow(
-                                              color: Colors.black.withOpacity(0.3),
+                                              color:
+                                                  Colors.black.withOpacity(0.3),
                                               blurRadius: 4,
                                               offset: const Offset(0, 1),
                                             ),
@@ -227,7 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-  
+
   void _handleLogout() {
     Provider.of<AuthProvider>(context, listen: false).logout();
     Navigator.pushReplacementNamed(context, '/');
@@ -246,7 +255,8 @@ class _WaterGridEffectPainter extends CustomPainter {
   final int activeIndex;
   final int totalItems;
 
-  _WaterGridEffectPainter({required this.activeIndex, required this.totalItems});
+  _WaterGridEffectPainter(
+      {required this.activeIndex, required this.totalItems});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -306,6 +316,7 @@ class _WaterGridEffectPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _WaterGridEffectPainter oldDelegate) {
-    return oldDelegate.activeIndex != activeIndex || oldDelegate.totalItems != totalItems;
+    return oldDelegate.activeIndex != activeIndex ||
+        oldDelegate.totalItems != totalItems;
   }
 }

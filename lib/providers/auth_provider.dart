@@ -27,7 +27,8 @@ class AuthProvider extends ChangeNotifier {
   String? get activeRegistrationOtp => _activeRegistrationOtp;
 
   bool get isSupabaseConnected => SupabaseService.instance.isConnected;
-  String get connectionStatusMessage => SupabaseService.instance.lastConnectionMessage;
+  String get connectionStatusMessage =>
+      SupabaseService.instance.lastConnectionMessage;
 
   /// Authenticate strictly against Supabase user_auth table
   Future<bool> login(String identifier, String password) async {
@@ -43,7 +44,8 @@ class AuthProvider extends ChangeNotifier {
 
       _currentUser = user;
       _isLoggedIn = true;
-      _username = user.fullName.isNotEmpty ? user.fullName : user.email.split('@')[0];
+      _username =
+          user.fullName.isNotEmpty ? user.fullName : user.email.split('@')[0];
       _userEmail = user.email;
       _isOtpVerified = true; // Logged in directly from DB
       _isLoading = false;
@@ -59,7 +61,8 @@ class AuthProvider extends ChangeNotifier {
   }
 
   /// Dispatch real-time in-app notification OTP for registration
-  String sendRealTimeRegistrationOtp({required String phone, required String name}) {
+  String sendRealTimeRegistrationOtp(
+      {required String phone, required String name}) {
     final random = Random();
     final otp = (100000 + random.nextInt(900000)).toString();
     _activeRegistrationOtp = otp;
@@ -143,6 +146,15 @@ class AuthProvider extends ChangeNotifier {
       return true;
     }
     return false;
+  }
+
+  void setCurrentUser(UserModel user) {
+    _currentUser = user;
+    _isLoggedIn = true;
+    _username = user.fullName;
+    _userEmail = user.email;
+    _isOtpVerified = true;
+    notifyListeners();
   }
 
   void logout() {

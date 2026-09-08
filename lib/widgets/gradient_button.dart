@@ -6,7 +6,7 @@ class GradientButton extends StatelessWidget {
   final VoidCallback onPressed;
   final bool isFullWidth;
   final double? height;
-  
+
   const GradientButton({
     super.key,
     required this.text,
@@ -14,18 +14,18 @@ class GradientButton extends StatelessWidget {
     this.isFullWidth = true,
     this.height,
   });
-  
+
   @override
   Widget build(BuildContext context) {
     return Container(
       width: isFullWidth ? double.infinity : null,
       height: height ?? 52,
       decoration: BoxDecoration(
-        gradient: AppColors.greenGradient,  // Updated to use green gradient
+        gradient: AppColors.greenGradient, // Updated to use green gradient
         borderRadius: BorderRadius.circular(AppDimens.borderRadiusMedium),
         boxShadow: [
           BoxShadow(
-            color: AppColors.glowGreen,  // Added green glow effect
+            color: AppColors.glowGreen, // Added green glow effect
             blurRadius: 10,
             spreadRadius: 1,
           ),
@@ -36,7 +36,8 @@ class GradientButton extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
-          foregroundColor: AppColors.background,  // Changed to background color for contrast
+          foregroundColor:
+              AppColors.background, // Changed to background color for contrast
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppDimens.borderRadiusMedium),
           ),

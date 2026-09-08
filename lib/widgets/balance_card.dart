@@ -42,7 +42,8 @@ class BalanceCard extends StatelessWidget {
         padding: padding ?? const EdgeInsets.all(AppDimens.paddingLarge),
         decoration: BoxDecoration(
           gradient: AppColors.greenGradient,
-          borderRadius: BorderRadius.circular(borderRadius ?? AppDimens.borderRadiusLarge),
+          borderRadius: BorderRadius.circular(
+              borderRadius ?? AppDimens.borderRadiusLarge),
           boxShadow: [
             BoxShadow(
               color: AppColors.glowGreen,
@@ -90,7 +91,8 @@ class BalanceCard extends StatelessWidget {
                   padding: const EdgeInsets.all(AppDimens.paddingSmall + 4),
                   decoration: BoxDecoration(
                     color: AppColors.background.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(AppDimens.borderRadiusSmall),
+                    borderRadius:
+                        BorderRadius.circular(AppDimens.borderRadiusSmall),
                   ),
                   child: const Icon(
                     Icons.account_balance_wallet,
@@ -100,7 +102,7 @@ class BalanceCard extends StatelessWidget {
                 ),
               ],
             ),
-            
+
             // Recharge Button - Moved to next line
             if (showRechargeButton) ...[
               const SizedBox(height: 12),

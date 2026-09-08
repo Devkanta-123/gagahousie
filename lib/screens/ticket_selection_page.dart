@@ -7,7 +7,7 @@ import '../widgets/gaga_app_header.dart';
 
 class TicketSelectionPage extends StatefulWidget {
   final Map<String, String> ticket;
-  
+
   const TicketSelectionPage({
     super.key,
     required this.ticket,
@@ -80,22 +80,22 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
 
   Map<String, dynamic> _generateTambolaTicket() {
     Random random = Random();
-    
+
     List<List<int?>> ticket = List.generate(3, (_) => List.filled(9, null));
-    
+
     for (int row = 0; row < 3; row++) {
       List<int> positions = List.generate(9, (index) => index);
       positions.shuffle();
       positions = positions.take(5).toList();
       positions.sort();
-      
+
       for (int col = 0; col < 9; col++) {
         if (positions.contains(col)) {
           int minNum = col == 0 ? 1 : (col * 10);
           int maxNum = col == 8 ? 90 : (col * 10) + 9;
-          
+
           int number = minNum + random.nextInt(maxNum - minNum + 1);
-          
+
           bool duplicate = true;
           int attempts = 0;
           while (duplicate && attempts < 10) {
@@ -109,12 +109,12 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
             }
             attempts++;
           }
-          
+
           ticket[row][col] = number;
         }
       }
     }
-    
+
     return {'ticketData': ticket};
   }
 
@@ -123,7 +123,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
   }
 
   double get totalPrice {
-    double price = double.parse(widget.ticket['price']!.replaceAll('₹', '').replaceAll('\$', ''));
+    double price = double.parse(
+        widget.ticket['price']!.replaceAll('₹', '').replaceAll('\$', ''));
     return price * selectedCount;
   }
 
@@ -134,21 +135,21 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
         .map<int>((item) => item['slNo'] as int)
         .toList()
       ..sort();
-    
+
     // If no tickets selected, all tickets are selectable
     if (selectedSLs.isEmpty) {
       return true;
     }
-    
+
     // If already 3 tickets selected, disable all
     if (selectedSLs.length >= 3) {
       return false;
     }
-    
+
     // Check if selected tickets are in the same set (1-3 or 4-6)
     bool inSet1 = selectedSLs.every((sl) => sl >= 1 && sl <= 3);
     bool inSet2 = selectedSLs.every((sl) => sl >= 4 && sl <= 6);
-    
+
     // If selected tickets are in set 1 (1-3)
     if (inSet1) {
       // Only allow selecting from set 1 (1-3)
@@ -161,7 +162,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       }
       return false; // Can't select from set 2
     }
-    
+
     // If selected tickets are in set 2 (4-6)
     if (inSet2) {
       // Only allow selecting from set 2 (4-6)
@@ -174,7 +175,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       }
       return false; // Can't select from set 1
     }
-    
+
     return false;
   }
 
@@ -184,19 +185,19 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
         .map<int>((item) => item['slNo'] as int)
         .toList()
       ..sort();
-    
+
     if (selectedSLs.isEmpty) {
       return 'Select tickets (max 3) from (1-3) or (4-6)';
     }
-    
+
     if (selectedSLs.length >= 3) {
       return 'Maximum 3 tickets selected';
     }
-    
+
     // Check which set is being selected
     bool inSet1 = selectedSLs.every((sl) => sl >= 1 && sl <= 3);
     bool inSet2 = selectedSLs.every((sl) => sl >= 4 && sl <= 6);
-    
+
     if (inSet1) {
       int nextInSequence = selectedSLs.last + 1;
       if (nextInSequence <= 3) {
@@ -204,7 +205,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       }
       return 'Set 1 complete! Select Set 2 (4-6) after clearing';
     }
-    
+
     if (inSet2) {
       int nextInSequence = selectedSLs.last + 1;
       if (nextInSequence <= 6) {
@@ -212,7 +213,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       }
       return 'Set 2 complete!';
     }
-    
+
     return 'Select from Set 1 (1-3) or Set 2 (4-6)';
   }
 
@@ -227,7 +228,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
             GaGaAppHeader(
               showBackButton: true,
               compact: true,
-              subtitle: '${widget.ticket['ticket'] ?? 'Ticket'} • Select Numbers',
+              subtitle:
+                  '${widget.ticket['ticket'] ?? 'Ticket'} • Select Numbers',
               showBalance: true,
               balance: 1000.0,
               showRechargeButton: true,
@@ -262,7 +264,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: const Color(0xFF00B894),
                       borderRadius: BorderRadius.circular(20),
@@ -287,7 +290,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     // Ticket Info Card
                     _buildTicketInfoCard(),
                     const SizedBox(height: 16),
-                    
+
                     // Main Ticket Container - All tickets under one card with margins
                     Container(
                       margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -335,7 +338,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                                   ),
                                 ),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 4),
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF00B894),
                                     borderRadius: BorderRadius.circular(20),
@@ -352,7 +356,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                               ],
                             ),
                           ),
-                          
+
                           // Set 1: Tickets 1-3
                           Container(
                             margin: const EdgeInsets.all(8),
@@ -369,7 +373,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                                 Padding(
                                   padding: const EdgeInsets.all(8.0),
                                   child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
                                       Row(
                                         children: [
@@ -385,13 +390,18 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                                         ],
                                       ),
                                       if (tambolaTickets
-                                          .where((t) => t['slNo'] as int >= 1 && t['slNo'] as int <= 3)
+                                          .where((t) =>
+                                              t['slNo'] as int >= 1 &&
+                                              t['slNo'] as int <= 3)
                                           .every((t) => t['selected'] as bool))
                                         Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 2),
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFF00B894).withOpacity(0.15),
-                                            borderRadius: BorderRadius.circular(12),
+                                            color: const Color(0xFF00B894)
+                                                .withOpacity(0.15),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                             border: Border.all(
                                               color: const Color(0xFF00B894),
                                               width: 1,
@@ -411,15 +421,19 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                                 ),
                                 // Tickets in Set 1
                                 ...tambolaTickets
-                                    .where((t) => t['slNo'] as int >= 1 && t['slNo'] as int <= 3)
+                                    .where((t) =>
+                                        t['slNo'] as int >= 1 &&
+                                        t['slNo'] as int <= 3)
                                     .map((ticket) => Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                      child: _buildTambolaTicketCard(ticket),
-                                    )),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 4, vertical: 2),
+                                          child:
+                                              _buildTambolaTicketCard(ticket),
+                                        )),
                               ],
                             ),
                           ),
-                          
+
                           // Set 2: Tickets 4-6
                           Container(
                             margin: const EdgeInsets.all(8),
@@ -436,11 +450,11 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                                 Padding(
                                   padding: const EdgeInsets.all(8.0),
                                   child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
                                       Row(
                                         children: [
-                                       
                                           const SizedBox(width: 8),
                                           const Text(
                                             'Tickets 4-6',
@@ -453,13 +467,18 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                                         ],
                                       ),
                                       if (tambolaTickets
-                                          .where((t) => t['slNo'] as int >= 4 && t['slNo'] as int <= 6)
+                                          .where((t) =>
+                                              t['slNo'] as int >= 4 &&
+                                              t['slNo'] as int <= 6)
                                           .every((t) => t['selected'] as bool))
                                         Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 2),
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFFFF6B6B).withOpacity(0.15),
-                                            borderRadius: BorderRadius.circular(12),
+                                            color: const Color(0xFFFF6B6B)
+                                                .withOpacity(0.15),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                             border: Border.all(
                                               color: const Color(0xFFFF6B6B),
                                               width: 1,
@@ -479,15 +498,19 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                                 ),
                                 // Tickets in Set 2
                                 ...tambolaTickets
-                                    .where((t) => t['slNo'] as int >= 4 && t['slNo'] as int <= 6)
+                                    .where((t) =>
+                                        t['slNo'] as int >= 4 &&
+                                        t['slNo'] as int <= 6)
                                     .map((ticket) => Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                      child: _buildTambolaTicketCard(ticket),
-                                    )),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 4, vertical: 2),
+                                          child:
+                                              _buildTambolaTicketCard(ticket),
+                                        )),
                               ],
                             ),
                           ),
-                          
+
                           const SizedBox(height: 8),
                         ],
                       ),
@@ -497,7 +520,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                 ),
               ),
             ),
-            
+
             // Bottom Button - Navigates to Purchase Page
             _buildBottomButton(),
           ],
@@ -538,7 +561,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
                   color: const Color(0xFF00B894).withOpacity(0.15),
                   borderRadius: BorderRadius.circular(20),
@@ -602,11 +626,11 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
     final isSelected = ticket['selected'] as bool;
     final slNo = ticket['slNo'] as int;
     final ticketData = ticket['ticketData']['ticketData'] as List<List<int?>>;
-    
+
     // Check if this ticket can be selected
     bool canSelect = isTicketSelectable(slNo);
     bool isDisabled = !canSelect && !isSelected;
-    
+
     return GestureDetector(
       onTap: () {
         if (canSelect || isSelected) {
@@ -618,27 +642,29 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: isDisabled 
+          color: isDisabled
               ? Colors.grey.withOpacity(0.08)
-              : (isSelected 
+              : (isSelected
                   ? const Color(0xFF00B894).withOpacity(0.08)
                   : Colors.white),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isSelected 
+            color: isSelected
                 ? const Color(0xFF00B894)
-                : (isDisabled 
+                : (isDisabled
                     ? Colors.grey.withOpacity(0.15)
                     : Colors.grey.withOpacity(0.2)),
             width: isSelected ? 2 : 1,
           ),
-          boxShadow: isSelected ? [
-            BoxShadow(
-              color: const Color(0xFF00B894).withOpacity(0.15),
-              blurRadius: 8,
-              spreadRadius: 1,
-            ),
-          ] : null,
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF00B894).withOpacity(0.15),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : null,
         ),
         child: Padding(
           padding: const EdgeInsets.all(10.0),
@@ -653,16 +679,16 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     width: 28,
                     height: 28,
                     decoration: BoxDecoration(
-                      color: isSelected 
+                      color: isSelected
                           ? const Color(0xFF00B894)
-                          : (isDisabled 
+                          : (isDisabled
                               ? Colors.grey.withOpacity(0.2)
                               : const Color(0xFF00B894).withOpacity(0.15)),
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(
-                        color: isSelected 
+                        color: isSelected
                             ? const Color(0xFF00B894)
-                            : (isDisabled 
+                            : (isDisabled
                                 ? Colors.grey.withOpacity(0.15)
                                 : const Color(0xFF00B894).withOpacity(0.3)),
                         width: 1,
@@ -672,9 +698,9 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                       child: Text(
                         slNo.toString(),
                         style: TextStyle(
-                          color: isSelected 
+                          color: isSelected
                               ? Colors.white
-                              : (isDisabled 
+                              : (isDisabled
                                   ? Colors.grey
                                   : const Color(0xFF00B894)),
                           fontWeight: FontWeight.bold,
@@ -690,21 +716,21 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     height: 20,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: isSelected 
+                      color: isSelected
                           ? const Color(0xFF00B894)
-                          : (isDisabled 
+                          : (isDisabled
                               ? Colors.grey.withOpacity(0.1)
                               : Colors.transparent),
                       border: Border.all(
-                        color: isSelected 
+                        color: isSelected
                             ? const Color(0xFF00B894)
-                            : (isDisabled 
+                            : (isDisabled
                                 ? Colors.grey.withOpacity(0.3)
                                 : Colors.grey.withOpacity(0.5)),
                         width: 1.5,
                       ),
                     ),
-                    child: isSelected 
+                    child: isSelected
                         ? const Icon(
                             Icons.check,
                             color: Colors.white,
@@ -718,7 +744,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     child: Text(
                       ticket['playerName'],
                       style: TextStyle(
-                        color: isDisabled ? Colors.grey : const Color(0xFF2C3E50),
+                        color:
+                            isDisabled ? Colors.grey : const Color(0xFF2C3E50),
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
@@ -726,7 +753,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                   ),
                   // Serial Number
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: const Color(0xFF00B894).withOpacity(0.1),
                       borderRadius: BorderRadius.circular(10),
@@ -738,7 +766,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     child: Text(
                       ticket['serialNumber'],
                       style: TextStyle(
-                        color: isDisabled ? Colors.grey : const Color(0xFF00B894),
+                        color:
+                            isDisabled ? Colors.grey : const Color(0xFF00B894),
                         fontSize: 9,
                         fontWeight: FontWeight.w500,
                       ),
@@ -746,9 +775,9 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                   ),
                 ],
               ),
-              
+
               const SizedBox(height: 6),
-              
+
               // Unique Code
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -765,9 +794,9 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                   ),
                 ),
               ),
-              
+
               const SizedBox(height: 8),
-              
+
               // Tambola Ticket Grid (3 rows x 9 columns)
               ...List.generate(3, (rowIndex) {
                 return Padding(
@@ -776,15 +805,15 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     children: List.generate(9, (colIndex) {
                       final number = ticketData[rowIndex][colIndex];
                       final isFreeSlot = number == null;
-                      
+
                       return Expanded(
                         child: Container(
                           margin: const EdgeInsets.symmetric(horizontal: 1.5),
                           height: 28,
                           decoration: BoxDecoration(
-                            color: isFreeSlot 
+                            color: isFreeSlot
                                 ? Colors.grey.withOpacity(0.05)
-                                : (isSelected 
+                                : (isSelected
                                     ? const Color(0xFF00B894).withOpacity(0.15)
                                     : (isDisabled
                                         ? Colors.grey.withOpacity(0.05)
@@ -793,11 +822,12 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                             border: Border.all(
                               color: isFreeSlot
                                   ? Colors.grey.withOpacity(0.1)
-                                  : (isSelected 
+                                  : (isSelected
                                       ? const Color(0xFF00B894)
                                       : (isDisabled
                                           ? Colors.grey.withOpacity(0.2)
-                                          : const Color(0xFF00B894).withOpacity(0.3))),
+                                          : const Color(0xFF00B894)
+                                              .withOpacity(0.3))),
                               width: isSelected ? 1.5 : 0.8,
                             ),
                           ),
@@ -805,9 +835,9 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                             child: Text(
                               isFreeSlot ? "" : number.toString(),
                               style: TextStyle(
-                                color: isFreeSlot 
+                                color: isFreeSlot
                                     ? Colors.transparent
-                                    : (isSelected 
+                                    : (isSelected
                                         ? const Color(0xFF00B894)
                                         : (isDisabled
                                             ? Colors.grey
@@ -823,7 +853,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                   ),
                 );
               }),
-              
+
               // Column Headers (1-9)
               Row(
                 children: List.generate(9, (index) {
@@ -895,34 +925,35 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
               width: double.infinity,
               height: 55,
               child: ElevatedButton(
-                onPressed: selectedCount > 0 ? () {
-                  // Navigate to Purchase Page with ticket data and selected tickets info
-                  final selectedTickets = tambolaTickets
-                      .where((item) => item['selected'] as bool)
-                      .map((item) => item['playerName'] as String)
-                      .toList();
-                  
-                  // Navigate to TicketPurchasePage
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => TicketPurchasePage(
-                        ticket: widget.ticket,
-                        showBackButton: true,
-                      ),
-                    ),
-                  );
-                } : null,
+                onPressed: selectedCount > 0
+                    ? () {
+                        // Navigate to Purchase Page with ticket data and selected tickets info
+                        final selectedTickets = tambolaTickets
+                            .where((item) => item['selected'] as bool)
+                            .map((item) => item['playerName'] as String)
+                            .toList();
+
+                        // Navigate to TicketPurchasePage
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => TicketPurchasePage(
+                              ticket: widget.ticket,
+                              showBackButton: true,
+                            ),
+                          ),
+                        );
+                      }
+                    : null,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: selectedCount > 0 
-                      ? const Color(0xFF00B894)
-                      : Colors.grey,
+                  backgroundColor:
+                      selectedCount > 0 ? const Color(0xFF00B894) : Colors.grey,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
                 child: Text(
-                  selectedCount > 0 
+                  selectedCount > 0
                       ? 'Buy Now (${selectedCount} selected)'
                       : 'Select tickets to continue',
                   style: const TextStyle(

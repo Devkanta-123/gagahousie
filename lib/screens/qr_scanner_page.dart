@@ -3,11 +3,12 @@ import 'dart:async';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 import 'dart:math';
+
 class QRScannerPage extends StatefulWidget {
   final List<String> selectedTickets;
   final double totalAmount;
   final String ticketId;
-  
+
   const QRScannerPage({
     super.key,
     required this.selectedTickets,
@@ -24,13 +25,13 @@ class _QRScannerPageState extends State<QRScannerPage> {
   int _secondsRemaining = 60;
   bool _isScanning = true;
   bool _isPaymentSuccess = false;
-  
+
   @override
   void initState() {
     super.initState();
     _startTimer();
   }
-  
+
   void _startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() {
@@ -44,7 +45,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
       });
     });
   }
-  
+
   void _showTimeoutDialog() {
     showDialog(
       context: context,
@@ -74,7 +75,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
       ),
     );
   }
-  
+
   void _simulateQRScan() {
     // Simulate QR code scanning
     Future.delayed(const Duration(seconds: 2), () {
@@ -88,7 +89,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
       }
     });
   }
-  
+
   void _showSuccessDialog() {
     showDialog(
       context: context,
@@ -138,13 +139,13 @@ class _QRScannerPageState extends State<QRScannerPage> {
       ),
     );
   }
-  
+
   @override
   void dispose() {
     _timer.cancel();
     super.dispose();
   }
-  
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -158,21 +159,21 @@ class _QRScannerPageState extends State<QRScannerPage> {
           ),
           // Timer Card
           _buildTimerCard(),
-          
+
           // QR Scanner Area
           Expanded(
             child: Center(
               child: _isScanning ? _buildQRScanner() : _buildResultScreen(),
             ),
           ),
-          
+
           // Payment Info
           _buildPaymentInfo(),
         ],
       ),
     );
   }
-  
+
   Widget _buildTimerCard() {
     return Container(
       margin: const EdgeInsets.all(16),
@@ -203,8 +204,8 @@ class _QRScannerPageState extends State<QRScannerPage> {
           Text(
             '00:${_secondsRemaining.toString().padLeft(2, '0')}',
             style: TextStyle(
-              color: _secondsRemaining <= 10 
-                  ? Colors.redAccent 
+              color: _secondsRemaining <= 10
+                  ? Colors.redAccent
                   : AppColors.primaryGreen,
               fontSize: 48,
               fontWeight: FontWeight.bold,
@@ -216,8 +217,8 @@ class _QRScannerPageState extends State<QRScannerPage> {
             value: _secondsRemaining / 60,
             backgroundColor: Colors.white.withOpacity(0.2),
             valueColor: AlwaysStoppedAnimation<Color>(
-              _secondsRemaining <= 10 
-                  ? Colors.redAccent 
+              _secondsRemaining <= 10
+                  ? Colors.redAccent
                   : AppColors.primaryGreen,
             ),
           ),
@@ -225,7 +226,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
       ),
     );
   }
-  
+
   Widget _buildQRScanner() {
     return GestureDetector(
       onTap: _simulateQRScan,
@@ -282,7 +283,8 @@ class _QRScannerPageState extends State<QRScannerPage> {
                   color: AppColors.primaryGreen,
                   child: const LinearProgressIndicator(
                     backgroundColor: Colors.transparent,
-                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryGreen),
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(AppColors.primaryGreen),
                   ),
                 ),
               ),
@@ -292,7 +294,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
       ),
     );
   }
-  
+
   Widget _buildResultScreen() {
     if (_isPaymentSuccess) {
       return Container(
@@ -326,7 +328,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
         ),
       );
     }
-    
+
     return Container(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -372,7 +374,7 @@ class _QRScannerPageState extends State<QRScannerPage> {
       ),
     );
   }
-  
+
   Widget _buildPaymentInfo() {
     return Container(
       margin: const EdgeInsets.all(16),
@@ -455,28 +457,32 @@ class QRCodePainter extends CustomPainter {
     final paint = Paint()
       ..color = Colors.black
       ..style = PaintingStyle.fill;
-    
+
     final random = Random();
     final cellSize = size.width / 10;
-    
+
     for (int i = 0; i < 10; i++) {
       for (int j = 0; j < 10; j++) {
         if (random.nextBool()) {
           canvas.drawRect(
-            Rect.fromLTWH(i * cellSize, j * cellSize, cellSize - 2, cellSize - 2),
+            Rect.fromLTWH(
+                i * cellSize, j * cellSize, cellSize - 2, cellSize - 2),
             paint,
           );
         }
       }
     }
-    
+
     // Draw position markers
     _drawPositionMarker(canvas, 0, 0, cellSize * 2, paint);
-    _drawPositionMarker(canvas, size.width - cellSize * 2, 0, cellSize * 2, paint);
-    _drawPositionMarker(canvas, 0, size.height - cellSize * 2, cellSize * 2, paint);
+    _drawPositionMarker(
+        canvas, size.width - cellSize * 2, 0, cellSize * 2, paint);
+    _drawPositionMarker(
+        canvas, 0, size.height - cellSize * 2, cellSize * 2, paint);
   }
-  
-  void _drawPositionMarker(Canvas canvas, double x, double y, double size, Paint paint) {
+
+  void _drawPositionMarker(
+      Canvas canvas, double x, double y, double size, Paint paint) {
     canvas.drawRect(Rect.fromLTWH(x, y, size, size), paint);
     canvas.drawRect(
       Rect.fromLTWH(x + size * 0.2, y + size * 0.2, size * 0.6, size * 0.6),
@@ -487,7 +493,7 @@ class QRCodePainter extends CustomPainter {
       paint,
     );
   }
-  
+
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

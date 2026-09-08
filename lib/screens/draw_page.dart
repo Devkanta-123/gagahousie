@@ -14,7 +14,14 @@ class _DrawPageState extends State<DrawPage> {
   final int currentNumber = 77;
 
   final List<int> drawnNumbers = [
-    1, 20, 29, 57, 72, 77, 80, 93,
+    1,
+    20,
+    29,
+    57,
+    72,
+    77,
+    80,
+    93,
   ];
 
   // Generate random Tambola tickets for players
@@ -50,22 +57,22 @@ class _DrawPageState extends State<DrawPage> {
 
   List<List<int?>> _generateTambolaTicket() {
     Random random = Random();
-    
+
     List<List<int?>> ticket = List.generate(3, (_) => List.filled(9, null));
-    
+
     for (int row = 0; row < 3; row++) {
       List<int> positions = List.generate(9, (index) => index);
       positions.shuffle();
       positions = positions.take(5).toList();
       positions.sort();
-      
+
       for (int col = 0; col < 9; col++) {
         if (positions.contains(col)) {
           int minNum = col == 0 ? 1 : (col * 10);
           int maxNum = col == 8 ? 90 : (col * 10) + 9;
-          
+
           int number = minNum + random.nextInt(maxNum - minNum + 1);
-          
+
           bool duplicate = true;
           int attempts = 0;
           while (duplicate && attempts < 10) {
@@ -79,12 +86,12 @@ class _DrawPageState extends State<DrawPage> {
             }
             attempts++;
           }
-          
+
           ticket[row][col] = number;
         }
       }
     }
-    
+
     return ticket;
   }
 
@@ -108,32 +115,34 @@ class _DrawPageState extends State<DrawPage> {
                   /// TOP SECTION
                   _buildTopSection(),
 
-                        const SizedBox(height: 20),
+                  const SizedBox(height: 20),
 
-                        /// PLAYER TICKETS
-                        ...playerTickets.map((player) => Padding(
-                          padding: const EdgeInsets.only(bottom: 15),
-                          child: _buildTicketCard(
-                            player['playerName'],
-                            player['slNo'],
-                            player['serialNumber'],
-                            player['ticketData'],
-                          ),
-                        )).toList(),
+                  /// PLAYER TICKETS
+                  ...playerTickets
+                      .map((player) => Padding(
+                            padding: const EdgeInsets.only(bottom: 15),
+                            child: _buildTicketCard(
+                              player['playerName'],
+                              player['slNo'],
+                              player['serialNumber'],
+                              player['ticketData'],
+                            ),
+                          ))
+                      .toList(),
 
-                        const SizedBox(height: 20),
+                  const SizedBox(height: 20),
 
-                        /// PRIZE PANEL AT BOTTOM
-                        _buildPrizePanel(),
+                  /// PRIZE PANEL AT BOTTOM
+                  _buildPrizePanel(),
 
-                        const SizedBox(height: 20),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+                  const SizedBox(height: 20),
+                ],
+              ),
             ),
-          );
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildTopSection() {
@@ -238,9 +247,7 @@ class _DrawPageState extends State<DrawPage> {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
-                  color: selected
-                      ? Colors.white
-                      : const Color(0xFF2C3E50),
+                  color: selected ? Colors.white : const Color(0xFF2C3E50),
                 ),
               ),
             ),
@@ -333,14 +340,15 @@ class _DrawPageState extends State<DrawPage> {
                   children: List.generate(9, (colIndex) {
                     final number = ticketData[rowIndex][colIndex];
                     final isFreeSlot = number == null;
-                    final isDrawn = number != null && drawnNumbers.contains(number);
-                    
+                    final isDrawn =
+                        number != null && drawnNumbers.contains(number);
+
                     return Expanded(
                       child: Container(
                         margin: const EdgeInsets.symmetric(horizontal: 3),
                         height: 36,
                         decoration: BoxDecoration(
-                          color: isFreeSlot 
+                          color: isFreeSlot
                               ? Colors.grey.withOpacity(0.05)
                               : (isDrawn
                                   ? const Color(0xFF00B894).withOpacity(0.2)
@@ -359,7 +367,7 @@ class _DrawPageState extends State<DrawPage> {
                           child: Text(
                             isFreeSlot ? "" : number.toString(),
                             style: TextStyle(
-                              color: isFreeSlot 
+                              color: isFreeSlot
                                   ? Colors.transparent
                                   : (isDrawn
                                       ? const Color(0xFF00B894)

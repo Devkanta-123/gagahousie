@@ -191,26 +191,29 @@ class TicketDetailsPage extends StatelessWidget {
             ),
           ),
         ),
-        ...tickets.map((ticket) => Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: _buildTicketCard(
-            playerName: ticket['playerName']!,
-            serialNumber: ticket['serialNumber']!,
-            uniqueCode: ticket['uniqueCode']!,
-            ticketData: ticket['ticketData'] as List<List<int?>>,
-            slNo: ticket['slNo'] as int,
-          ),
-        )).toList(),
+        ...tickets
+            .map((ticket) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _buildTicketCard(
+                    playerName: ticket['playerName']!,
+                    serialNumber: ticket['serialNumber']!,
+                    uniqueCode: ticket['uniqueCode']!,
+                    ticketData: ticket['ticketData'] as List<List<int?>>,
+                    slNo: ticket['slNo'] as int,
+                  ),
+                ))
+            .toList(),
       ],
     );
   }
 
-  Map<String, dynamic> _generateTambolaTicket(String playerName, String serialNumber, String uniqueCode) {
+  Map<String, dynamic> _generateTambolaTicket(
+      String playerName, String serialNumber, String uniqueCode) {
     Random random = Random();
-    
+
     // Create 3x9 grid initially filled with null (empty slots)
     List<List<int?>> ticket = List.generate(3, (_) => List.filled(9, null));
-    
+
     // Each row must have exactly 5 numbers (standard tambola)
     for (int row = 0; row < 3; row++) {
       // Generate random positions for this row (5 positions out of 9)
@@ -218,7 +221,7 @@ class TicketDetailsPage extends StatelessWidget {
       positions.shuffle();
       positions = positions.take(5).toList();
       positions.sort();
-      
+
       // For each column, generate number in the correct range
       for (int col = 0; col < 9; col++) {
         if (positions.contains(col)) {
@@ -227,9 +230,9 @@ class TicketDetailsPage extends StatelessWidget {
           // Col 4: 40-49, Col 5: 50-59, Col 6: 60-69, Col 7: 70-79, Col 8: 80-90
           int minNum = col == 0 ? 1 : (col * 10);
           int maxNum = col == 8 ? 90 : (col * 10) + 9;
-          
+
           int number = minNum + random.nextInt(maxNum - minNum + 1);
-          
+
           // Ensure no duplicate numbers in the same column across rows
           bool duplicate = true;
           int attempts = 0;
@@ -244,15 +247,15 @@ class TicketDetailsPage extends StatelessWidget {
             }
             attempts++;
           }
-          
+
           ticket[row][col] = number;
         }
       }
     }
-    
+
     // Generate random SL number (1-7)
     int slNo = random.nextInt(7) + 1;
-    
+
     return {
       'playerName': playerName,
       'serialNumber': serialNumber,
@@ -351,7 +354,7 @@ class TicketDetailsPage extends StatelessWidget {
                 ),
               ],
             ),
-            
+
             /// Unique Code
             const SizedBox(height: 6),
             Container(
@@ -372,9 +375,9 @@ class TicketDetailsPage extends StatelessWidget {
                 ),
               ),
             ),
-            
+
             const SizedBox(height: 10),
-            
+
             /// Tambola Ticket Grid (3 rows x 9 columns)
             ...List.generate(3, (rowIndex) {
               return Padding(
@@ -383,13 +386,13 @@ class TicketDetailsPage extends StatelessWidget {
                   children: List.generate(9, (colIndex) {
                     final number = ticketData[rowIndex][colIndex];
                     final isFreeSlot = number == null;
-                    
+
                     return Expanded(
                       child: Container(
                         margin: const EdgeInsets.symmetric(horizontal: 2),
                         height: 32,
                         decoration: BoxDecoration(
-                          color: isFreeSlot 
+                          color: isFreeSlot
                               ? Colors.grey.withOpacity(0.05)
                               : const Color(0xFF00B894).withOpacity(0.08),
                           borderRadius: BorderRadius.circular(6),
@@ -404,7 +407,7 @@ class TicketDetailsPage extends StatelessWidget {
                           child: Text(
                             isFreeSlot ? "" : number.toString(),
                             style: TextStyle(
-                              color: isFreeSlot 
+                              color: isFreeSlot
                                   ? Colors.transparent
                                   : const Color(0xFF2C3E50),
                               fontWeight: FontWeight.w600,
@@ -418,7 +421,7 @@ class TicketDetailsPage extends StatelessWidget {
                 ),
               );
             }),
-            
+
             /// Column Headers (1-9)
             const SizedBox(height: 4),
             Row(
@@ -440,9 +443,9 @@ class TicketDetailsPage extends StatelessWidget {
                 );
               }),
             ),
-            
+
             const SizedBox(height: 8),
-            
+
             // Status Badge
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
