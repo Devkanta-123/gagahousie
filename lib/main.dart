@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'services/supabase_service.dart';
 import 'utils/constants.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
@@ -8,7 +9,15 @@ import 'screens/register_screen.dart';
 import 'screens/otp_screen.dart';
 import 'screens/home_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Supabase connection at app start
+  debugPrint('==================================================');
+  debugPrint('🚀 [APP START] Initializing Supabase Connection...');
+  await SupabaseService.instance.initialize();
+  debugPrint('==================================================');
+
   runApp(const MyApp());
 }
 

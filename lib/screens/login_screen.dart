@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../services/supabase_config.dart';
 import '../utils/constants.dart';
+import '../utils/validators.dart';
 import '../widgets/wavy_header.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -12,36 +14,86 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final TextEditingController usernameController = TextEditingController();
+  final TextEditingController identifierController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Test Supabase connection on screen load and print status
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkConnectionStatus();
+    });
+  }
+
+  void _checkConnectionStatus() async {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    debugPrint('--------------------------------------------------');
+    debugPrint('🔍 [LOGIN SCREEN] Checking Supabase connection for login system...');
+    final result = await auth.checkSupabaseConnection();
+    if (result.success) {
+      debugPrint('✅ [LOGIN SCREEN] Supabase connection is active & ready for authentication!');
+    } else {
+      debugPrint('ℹ️ [LOGIN SCREEN] Supabase status: ${result.message}');
+    }
+    debugPrint('--------------------------------------------------');
+  }
 
   @override
   void dispose() {
-    usernameController.dispose();
+    identifierController.dispose();
     passwordController.dispose();
     super.dispose();
   }
 
   void _handleLogin() async {
-    if (usernameController.text.trim().isEmpty ||
-        passwordController.text.trim().isEmpty) {
-      _showSnackBar('Please fill all fields');
+    final identifier = identifierController.text.trim();
+    final password = passwordController.text.trim();
+
+    // 1. Validation with AuthValidator
+    final identifierError = AuthValidator.validateLoginIdentifier(identifier);
+    if (identifierError != null) {
+      _showSnackBar(identifierError);
       return;
     }
 
+    final passwordError = AuthValidator.validatePassword(password);
+    if (passwordError != null) {
+      _showSnackBar(passwordError);
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    debugPrint('==================================================');
+    debugPrint('🚀 [LOGIN SYSTEM] Initiating Supabase Authentication...');
+    debugPrint('🔑 [LOGIN SYSTEM] Identifier: $identifier');
+    debugPrint('🔑 [LOGIN SYSTEM] Table: ${SupabaseConfig.userAuthTable}');
+
     final auth = Provider.of<AuthProvider>(context, listen: false);
-    bool success = await auth.login(
-      usernameController.text.trim(),
-      passwordController.text.trim(),
-    );
+    bool success = await auth.login(identifier, password);
+
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+    });
 
     if (success) {
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/otp');
-      }
+      debugPrint('🎉 [LOGIN SYSTEM] Login SUCCESSFUL for $identifier! Redirecting to Home...');
+      debugPrint('==================================================');
+      _showSnackBar('Login successful! Welcome back.');
+      Navigator.pushReplacementNamed(context, '/home');
     } else {
-      _showSnackBar('Invalid credentials! Use admin@gmail.com / 1234');
+      final errorMsg = auth.errorMessage ??
+          'Invalid credentials. Please verify your email/phone and password.';
+      debugPrint('❌ [LOGIN SYSTEM] Login failed: $errorMsg');
+      debugPrint('==================================================');
+      _showSnackBar(errorMsg);
     }
   }
 
@@ -66,10 +118,9 @@ class _LoginScreenState extends State<LoginScreen> {
         physics: const BouncingScrollPhysics(),
         child: Column(
           children: [
-            // Professional Wavy Header with GaGa branding, welcome, and demo info
+            // Professional Wavy Header with GaGa branding and welcome
             const WavyBrandedHeader(
               subtitle: 'Welcome Back • Sign In to Continue',
-              demoCredential: 'Demo: admin@gmail.com / 1234',
             ),
 
             // Form inputs & actions
@@ -78,14 +129,72 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SizedBox(height: 8),
+                  // Supabase Connection Status Bar
+                  Consumer<AuthProvider>(
+                    builder: (context, auth, _) {
+                      final isConnected = auth.isSupabaseConnected;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: isConnected
+                              ? const Color(0xFFE8F5E9)
+                              : const Color(0xFFFFF8E1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isConnected
+                                ? const Color(0xFF4CAF50).withOpacity(0.3)
+                                : const Color(0xFFFFC107).withOpacity(0.4),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              isConnected ? Icons.cloud_done_rounded : Icons.cloud_queue_rounded,
+                              size: 18,
+                              color: isConnected ? const Color(0xFF2E7D32) : const Color(0xFFF57F17),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                isConnected
+                                    ? 'Supabase: Connected (user_auth ready)'
+                                    : 'Supabase: Connecting to DB...',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: isConnected ? const Color(0xFF2E7D32) : const Color(0xFFE65100),
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              onTap: _checkConnectionStatus,
+                              borderRadius: BorderRadius.circular(8),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                child: Text(
+                                  'Test',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: isConnected ? const Color(0xFF1B5E20) : const Color(0xFFBF360C),
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
 
-                  // Email Address Field
+                  // Email or 10-Digit Mobile Field
                   _buildGlassInputField(
-                    controller: usernameController,
-                    hint: 'Email Address',
+                    controller: identifierController,
+                    hint: 'Email Address or 10-Digit Mobile',
                     keyboardType: TextInputType.emailAddress,
-                    icon: Icons.email_outlined,
+                    icon: Icons.person_outline,
                   ),
                   const SizedBox(height: 16),
 
@@ -134,7 +243,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   // Sign In Button with Green Gradient
                   _buildGradientButton(
                     text: 'Sign In',
-                    onPressed: _handleLogin,
+                    isLoading: _isLoading,
+                    onPressed: _isLoading ? () {} : _handleLogin,
                   ),
 
                   const SizedBox(height: 28),
@@ -245,6 +355,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildGradientButton({
     required String text,
     required VoidCallback onPressed,
+    bool isLoading = false,
   }) {
     return Container(
       width: double.infinity,
@@ -252,32 +363,42 @@ class _LoginScreenState extends State<LoginScreen> {
       decoration: BoxDecoration(
         gradient: AppColors.greenGradient,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
+        boxShadow: const [
           BoxShadow(
             color: AppColors.glowGreen,
             blurRadius: 12,
-            offset: const Offset(0, 3),
+            offset: Offset(0, 3),
           ),
         ],
       ),
       child: ElevatedButton(
-        onPressed: onPressed,
+        onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
+          disabledBackgroundColor: Colors.transparent,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
         ),
-        child: Text(
-          text,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-            letterSpacing: 0.5,
-          ),
-        ),
+        child: isLoading
+            ? const SizedBox(
+                height: 22,
+                width: 22,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2.5,
+                ),
+              )
+            : Text(
+                text,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  letterSpacing: 0.5,
+                ),
+              ),
       ),
     );
   }

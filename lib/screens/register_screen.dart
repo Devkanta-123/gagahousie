@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../utils/constants.dart';
+import '../utils/validators.dart';
 import '../widgets/wavy_header.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -26,6 +27,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   int resendTimer = 45;
   bool isOtpSent = false;
   bool isResendEnabled = false;
+  bool _isLoading = false;
   Timer? _countdownTimer;
 
   @override
@@ -40,17 +42,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  void _handleRegistration() async {
-    if (fullNameController.text.trim().isEmpty ||
-        emailController.text.trim().isEmpty ||
-        mobileController.text.trim().isEmpty ||
-        passwordController.text.trim().isEmpty) {
-      _showSnackBar('Please fill all fields');
+  void _handleRegistration() {
+    // 1. Validation with AuthValidator
+    final nameError = AuthValidator.validateFullName(fullNameController.text);
+    if (nameError != null) {
+      _showSnackBar(nameError);
       return;
     }
 
-    if (passwordController.text != confirmPasswordController.text) {
-      _showSnackBar('Passwords do not match');
+    final emailError = AuthValidator.validateEmail(emailController.text);
+    if (emailError != null) {
+      _showSnackBar(emailError);
+      return;
+    }
+
+    final phoneError = AuthValidator.validatePhone(mobileController.text);
+    if (phoneError != null) {
+      _showSnackBar(phoneError);
+      return;
+    }
+
+    final passError = AuthValidator.validatePassword(passwordController.text);
+    if (passError != null) {
+      _showSnackBar(passError);
+      return;
+    }
+
+    final confirmError = AuthValidator.validateConfirmPassword(
+      passwordController.text,
+      confirmPasswordController.text,
+    );
+    if (confirmError != null) {
+      _showSnackBar(confirmError);
       return;
     }
 
@@ -59,6 +82,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    // 2. Generate and dispatch real-time in-app notification OTP (not SMS)
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final generatedOtp = auth.sendRealTimeRegistrationOtp(
+      phone: AuthValidator.cleanPhone(mobileController.text),
+      name: fullNameController.text.trim(),
+    );
+
     setState(() {
       isOtpSent = true;
       resendTimer = 45;
@@ -66,34 +96,62 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
     _startResendTimer();
 
-    _showSnackBar('OTP sent to your mobile number');
+    _showSnackBar('🔔 [Notification] Your GaGa verification OTP is $generatedOtp');
   }
 
   void _handleVerifyAndRegister() async {
-    if (otpController.text.trim().length == 6) {
-      final auth = Provider.of<AuthProvider>(context, listen: false);
-      bool success = await auth.register(
-        fullNameController.text.trim(),
-        emailController.text.trim(),
-        mobileController.text.trim(),
-        passwordController.text.trim(),
-      );
-
-      if (success && mounted) {
-        Navigator.pushReplacementNamed(context, '/home');
-      }
-    } else {
+    final otp = otpController.text.trim();
+    if (otp.length != 6) {
       _showSnackBar('Please enter valid 6-digit OTP');
+      return;
+    }
+
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+
+    // Verify against real-time generated OTP
+    if (!auth.verifyRegistrationOtp(otp)) {
+      _showSnackBar('Invalid OTP! Please check the code in the notification banner.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    bool success = await auth.register(
+      fullNameController.text.trim(),
+      emailController.text.trim(),
+      AuthValidator.cleanPhone(mobileController.text),
+      passwordController.text.trim(),
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    if (success) {
+      _showSnackBar('Registration successful! Welcome to GaGa Housie.');
+      Navigator.pushReplacementNamed(context, '/home');
+    } else {
+      _showSnackBar(auth.errorMessage ?? 'Registration failed. Please try again.');
     }
   }
 
   void _resendOTP() {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final newOtp = auth.sendRealTimeRegistrationOtp(
+      phone: AuthValidator.cleanPhone(mobileController.text),
+      name: fullNameController.text.trim(),
+    );
+
     setState(() {
       resendTimer = 45;
       isResendEnabled = false;
     });
     _startResendTimer();
-    _showSnackBar('OTP resent successfully');
+    _showSnackBar('🔔 [Notification] New verification OTP is $newOtp');
   }
 
   void _startResendTimer() {
@@ -167,11 +225,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // Mobile Number Field
+                  // Mobile Number Field (Strictly 10 digits)
                   _buildGlassInputField(
                     controller: mobileController,
-                    hint: 'Mobile Number',
+                    hint: '10-Digit Mobile Number',
                     keyboardType: TextInputType.phone,
+                    maxLength: 10,
                     icon: Icons.phone_outlined,
                   ),
                   const SizedBox(height: 16),
@@ -179,7 +238,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   // Choose Password Field
                   _buildGlassInputField(
                     controller: passwordController,
-                    hint: 'Choose Password',
+                    hint: 'Choose Password (min 4 chars)',
                     obscureText: !isPasswordVisible,
                     icon: Icons.lock_outlined,
                     suffixIcon: IconButton(
@@ -251,15 +310,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 16),
 
                   // Register Button
-                  _buildGradientButton(
-                    text: 'Register',
-                    onPressed: _handleRegistration,
-                  ),
+                  if (!isOtpSent)
+                    _buildGradientButton(
+                      text: 'Register',
+                      isLoading: _isLoading,
+                      onPressed: _handleRegistration,
+                    ),
 
                   if (isOtpSent) ...[
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
 
-                    // OTP Section
+                    // Real-time Notification Banner for OTP
+                    Consumer<AuthProvider>(
+                      builder: (context, auth, _) {
+                        final currentOtp = auth.activeRegistrationOtp ?? '------';
+                        return _buildRealTimeNotificationCard(currentOtp);
+                      },
+                    ),
+
+                    // OTP Input Field
                     _buildGlassInputField(
                       controller: otpController,
                       hint: 'Enter 6-digit OTP',
@@ -299,8 +368,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                     // Continue Button
                     _buildGradientButton(
-                      text: 'Verify & Continue',
-                      onPressed: _handleVerifyAndRegister,
+                      text: 'Verify & Complete Registration',
+                      isLoading: _isLoading,
+                      onPressed: _isLoading ? () {} : _handleVerifyAndRegister,
                     ),
                   ],
 
@@ -345,6 +415,123 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Real-Time in-app notification banner for verification code
+  Widget _buildRealTimeNotificationCard(String otp) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.primaryGreen.withOpacity(0.35),
+          width: 1.4,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryGreen.withOpacity(0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.notifications_active_rounded,
+                  color: AppColors.primaryGreen,
+                  size: 16,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'REAL-TIME IN-APP NOTIFICATION',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primaryGreen,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF16A34A),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'LIVE OTP',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your verification code for GaGa Housie is:',
+            style: TextStyle(
+              fontSize: 12.5,
+              color: Colors.grey.shade700,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                otp,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.primaryGreen,
+                  letterSpacing: 6,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  otpController.text = otp;
+                  _showSnackBar('OTP $otp auto-filled!');
+                },
+                icon: const Icon(Icons.touch_app_rounded, size: 15, color: AppColors.primaryGreen),
+                label: const Text(
+                  'Auto-Fill',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primaryGreen,
+                  ),
+                ),
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: BorderSide(color: AppColors.primaryGreen.withOpacity(0.3)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -412,6 +599,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget _buildGradientButton({
     required String text,
     required VoidCallback onPressed,
+    bool isLoading = false,
   }) {
     return Container(
       width: double.infinity,
@@ -419,32 +607,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
       decoration: BoxDecoration(
         gradient: AppColors.greenGradient,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
+        boxShadow: const [
           BoxShadow(
             color: AppColors.glowGreen,
             blurRadius: 12,
-            offset: const Offset(0, 3),
+            offset: Offset(0, 3),
           ),
         ],
       ),
       child: ElevatedButton(
-        onPressed: onPressed,
+        onPressed: isLoading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.transparent,
           shadowColor: Colors.transparent,
+          disabledBackgroundColor: Colors.transparent,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
         ),
-        child: Text(
-          text,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-            letterSpacing: 0.5,
-          ),
-        ),
+        child: isLoading
+            ? const SizedBox(
+                height: 22,
+                width: 22,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2.5,
+                ),
+              )
+            : Text(
+                text,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  letterSpacing: 0.5,
+                ),
+              ),
       ),
     );
   }

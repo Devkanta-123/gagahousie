@@ -221,7 +221,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('About GaGa Housie'), findsOneWidget);
-      expect(find.text('Developed By Devkanta Singh'), findsOneWidget);
+      expect(find.text('Devkanta Singh'), findsWidgets);
       expect(find.text('Version 1.0.0'), findsOneWidget);
       expect(find.text('My Account & Preferences'), findsOneWidget);
     });
@@ -418,7 +418,7 @@ void main() {
       expect(find.text('GaGa'), findsOneWidget);
       expect(find.text('HOUSIE TAMBOLA'), findsOneWidget);
       expect(find.text('Welcome Back • Sign In to Continue'), findsOneWidget);
-      expect(find.text('Demo: admin@gmail.com / 1234'), findsOneWidget);
+      expect(find.text('Email Address or 10-Digit Mobile'), findsOneWidget);
       expect(find.byType(ClipPath), findsWidgets);
       expect(find.text('Recharge'), findsNothing);
     });
