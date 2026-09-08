@@ -1,6 +1,8 @@
-// ticket_selection_page.dart
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'package:provider/provider.dart';
+import '../models/tambola_ticket_model.dart';
+import '../providers/ticket_provider.dart';
 import '../screens/ticket_purchase_page.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
@@ -72,10 +74,39 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
   @override
   void initState() {
     super.initState();
-    // Generate random tambola tickets
+    // Generate fallback initial tickets
     for (var ticket in tambolaTickets) {
       ticket['ticketData'] = _generateTambolaTicket();
     }
+    _loadConfiguredTickets();
+  }
+
+  void _loadConfiguredTickets() {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final ticketId = widget.ticket['id'];
+      if (ticketId == null || ticketId.isEmpty) return;
+
+      try {
+        final provider = Provider.of<TicketProvider>(context, listen: false);
+        List<TambolaTicketModel> configured =
+            provider.getCachedTambolaTickets(ticketId) ?? [];
+
+        if (configured.isEmpty) {
+          configured = await provider.fetchTambolaTickets(ticketId);
+        }
+
+        if (configured.isNotEmpty && mounted) {
+          setState(() {
+            tambolaTickets.clear();
+            for (final t in configured) {
+              tambolaTickets.add(t.toSelectionMap());
+            }
+          });
+        }
+      } catch (e) {
+        debugPrint('ℹ️ [SELECTION] Using generated fallback: $e');
+      }
+    });
   }
 
   Map<String, dynamic> _generateTambolaTicket() {
@@ -927,12 +958,6 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
               child: ElevatedButton(
                 onPressed: selectedCount > 0
                     ? () {
-                        // Navigate to Purchase Page with ticket data and selected tickets info
-                        final selectedTickets = tambolaTickets
-                            .where((item) => item['selected'] as bool)
-                            .map((item) => item['playerName'] as String)
-                            .toList();
-
                         // Navigate to TicketPurchasePage
                         Navigator.push(
                           context,
@@ -954,7 +979,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                 ),
                 child: Text(
                   selectedCount > 0
-                      ? 'Buy Now (${selectedCount} selected)'
+                      ? 'Buy Now ($selectedCount selected)'
                       : 'Select tickets to continue',
                   style: const TextStyle(
                     color: Colors.white,

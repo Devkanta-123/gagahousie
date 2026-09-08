@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/ticket_model.dart';
+import '../models/tambola_ticket_model.dart';
 import 'supabase_config.dart';
 import 'supabase_service.dart';
 
@@ -10,6 +11,7 @@ class TicketService {
   TicketService._internal();
 
   static const String ticketsTable = 'tickets';
+  static const String tambolaTicketsTable = 'tambola_tickets';
 
   /// Seed initial demo tickets for fallback / offline use
   static List<TicketModel> defaultInitialTickets() {
@@ -231,5 +233,79 @@ class TicketService {
       }
     }
     return TicketModel.generateTicketId(maxSeq + 1);
+  }
+
+  /// Fetch tambola tickets for a given draw ticket_id from Supabase
+  Future<List<TambolaTicketModel>> fetchTambolaTickets(String ticketId) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseConfig.isConfigured) {
+      debugPrint('ℹ️ [TAMBOLA] Supabase not connected. Returning empty list.');
+      return [];
+    }
+
+    try {
+      debugPrint('📥 [TAMBOLA] Fetching tickets for draw $ticketId...');
+      final response = await client
+          .from(tambolaTicketsTable)
+          .select()
+          .eq('ticket_id', ticketId)
+          .order('sl_no', ascending: true);
+
+      final List<dynamic> data = response as List<dynamic>;
+      final result = data
+          .map((item) =>
+              TambolaTicketModel.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+      debugPrint('✅ [TAMBOLA] Loaded ${result.length} tickets for $ticketId');
+      return result;
+    } catch (e) {
+      debugPrint('❌ [TAMBOLA FETCH ERROR] $e');
+      return [];
+    }
+  }
+
+  /// Save or upsert tambola tickets for a given draw ticket_id
+  Future<bool> saveTambolaTickets(
+      String ticketId, List<TambolaTicketModel> tickets) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseConfig.isConfigured) {
+      debugPrint('ℹ️ [TAMBOLA] Supabase not connected. Simulated local save.');
+      return true;
+    }
+
+    try {
+      debugPrint('💾 [TAMBOLA] Saving ${tickets.length} tickets for $ticketId...');
+      final payload = tickets.map((t) => t.toJson()).toList();
+      await client
+          .from(tambolaTicketsTable)
+          .upsert(payload, onConflict: 'ticket_id, sl_no');
+      debugPrint('✅ [TAMBOLA] Successfully saved tickets for $ticketId');
+      return true;
+    } on PostgrestException catch (pe) {
+      debugPrint('❌ [TAMBOLA SAVE ERROR] ${pe.message}');
+      return false;
+    } catch (e) {
+      debugPrint('❌ [TAMBOLA SAVE EXCEPTION] $e');
+      return false;
+    }
+  }
+
+  /// Delete tambola tickets for a draw
+  Future<bool> deleteTambolaTickets(String ticketId) async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseConfig.isConfigured) {
+      return true;
+    }
+
+    try {
+      await client
+          .from(tambolaTicketsTable)
+          .delete()
+          .eq('ticket_id', ticketId);
+      return true;
+    } catch (e) {
+      debugPrint('❌ [TAMBOLA DELETE ERROR] $e');
+      return false;
+    }
   }
 }

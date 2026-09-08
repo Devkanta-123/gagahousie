@@ -4,6 +4,7 @@ import '../models/ticket_model.dart';
 import '../providers/ticket_provider.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
+import 'admin_tambola_configurator_page.dart';
 
 class AdminTicketsTab extends StatefulWidget {
   const AdminTicketsTab({super.key});
@@ -726,40 +727,92 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              InkWell(
-                onTap: () => _showTicketModal(context, ticketToEdit: ticket),
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryGreen.withOpacity(0.08),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Setup/View Tambola Numbers button
+                  InkWell(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              AdminTambolaConfiguratorPage(ticket: ticket),
+                        ),
+                      );
+                    },
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: AppColors.primaryGreen.withOpacity(0.3),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(
-                        Icons.edit_note_rounded,
-                        size: 16,
-                        color: AppColors.primaryGreen,
-                      ),
-                      SizedBox(width: 4),
-                      Text(
-                        'Edit Ticket',
-                        style: TextStyle(
-                          color: AppColors.primaryGreen,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00B894).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFF00B894).withOpacity(0.35),
+                          width: 1,
                         ),
                       ),
-                    ],
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(
+                            Icons.grid_on_rounded,
+                            size: 14,
+                            color: Color(0xFF00B894),
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'Tambola Numbers',
+                            style: TextStyle(
+                              color: Color(0xFF00B894),
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+
+                  // Edit Ticket
+                  InkWell(
+                    onTap: () => _showTicketModal(context, ticketToEdit: ticket),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryGreen.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppColors.primaryGreen.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(
+                            Icons.edit_note_rounded,
+                            size: 15,
+                            color: AppColors.primaryGreen,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'Edit Ticket',
+                            style: TextStyle(
+                              color: AppColors.primaryGreen,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1373,9 +1426,18 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'Draw Ticket $_autogenTicketId created successfully in DB!'),
+                'Draw Ticket $_autogenTicketId created! Opening Tambola Setup...'),
             backgroundColor: const Color(0xFF196144),
             behavior: SnackBarBehavior.floating,
+          ),
+        );
+        // Automatically navigate to Tambola Ticket Configurator just after creation
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => AdminTambolaConfiguratorPage(
+              ticket: newTicket,
+            ),
           ),
         );
       } else {

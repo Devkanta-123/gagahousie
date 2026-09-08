@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/ticket_model.dart';
+import '../models/tambola_ticket_model.dart';
 import '../services/ticket_service.dart';
 
 class TicketProvider extends ChangeNotifier {
@@ -124,6 +125,45 @@ class TicketProvider extends ChangeNotifier {
   /// Set local tickets list directly (useful for testing or initial state)
   void setTickets(List<TicketModel> tickets) {
     _tickets = List.from(tickets);
+    notifyListeners();
+  }
+
+  // Tambola tickets cache keyed by ticketId
+  final Map<String, List<TambolaTicketModel>> _tambolaTicketsCache = {};
+
+  List<TambolaTicketModel>? getCachedTambolaTickets(String ticketId) =>
+      _tambolaTicketsCache[ticketId];
+
+  /// Fetch tambola tickets for a draw ticket
+  Future<List<TambolaTicketModel>> fetchTambolaTickets(String ticketId) async {
+    final fetched = await TicketService.instance.fetchTambolaTickets(ticketId);
+    if (fetched.isNotEmpty) {
+      _tambolaTicketsCache[ticketId] = fetched;
+      notifyListeners();
+    }
+    return fetched;
+  }
+
+  /// Save or update tambola tickets for a draw ticket
+  Future<bool> saveTambolaTickets(
+      String ticketId, List<TambolaTicketModel> tickets) async {
+    _isLoading = true;
+    notifyListeners();
+
+    final success =
+        await TicketService.instance.saveTambolaTickets(ticketId, tickets);
+    if (success) {
+      _tambolaTicketsCache[ticketId] = List.from(tickets);
+    }
+    _isLoading = false;
+    notifyListeners();
+    return success;
+  }
+
+  /// Store tambola tickets in cache directly (for testing or fast navigation)
+  void setCachedTambolaTickets(
+      String ticketId, List<TambolaTicketModel> tickets) {
+    _tambolaTicketsCache[ticketId] = List.from(tickets);
     notifyListeners();
   }
 }

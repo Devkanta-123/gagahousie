@@ -17,6 +17,8 @@ import 'package:gaga_housie/screens/ticket_details.dart';
 import 'package:gaga_housie/screens/ticket_purchase_page.dart';
 import 'package:gaga_housie/screens/qr_scanner_page.dart';
 import 'package:gaga_housie/screens/admin_tickets_tab.dart';
+import 'package:gaga_housie/screens/admin_tambola_configurator_page.dart';
+import 'package:gaga_housie/models/tambola_ticket_model.dart';
 import 'package:gaga_housie/models/ticket_model.dart';
 import 'package:gaga_housie/providers/auth_provider.dart';
 import 'package:gaga_housie/providers/ticket_provider.dart';
@@ -906,6 +908,157 @@ void main() {
       expect(find.text('No Matching Tickets Found'), findsNothing);
       expect(find.text('GAGA26000001'), findsOneWidget);
       expect(find.text('3 in DB • Page 1 of 1'), findsOneWidget);
+    });
+  });
+
+  group('Tambola Ticket Model & Admin Configurator Tests', () {
+    test('TambolaTicketModel.empty initializes valid empty 3x9 grid', () {
+      final emptyTicket = TambolaTicketModel.empty('GAGA26000001', 1);
+
+      expect(emptyTicket.ticketId, 'GAGA26000001');
+      expect(emptyTicket.slNo, 1);
+      expect(emptyTicket.ticketData.length, 3);
+      for (final row in emptyTicket.ticketData) {
+        expect(row.length, 9);
+        expect(row.every((cell) => cell == null), isTrue);
+      }
+      expect(emptyTicket.filledNumbersCount, 0);
+      expect(emptyTicket.isComplete, isFalse);
+    });
+
+    test('TambolaTicketModel.generateRandom produces valid 15-number 3x9 grid with 5 numbers per row', () {
+      final randomTicket = TambolaTicketModel.generateRandom('GAGA26000001', 2);
+
+      expect(randomTicket.ticketData.length, 3);
+      for (final row in randomTicket.ticketData) {
+        expect(row.length, 9);
+        final filledInRow = row.where((c) => c != null).length;
+        expect(filledInRow, 5);
+      }
+      expect(randomTicket.filledNumbersCount, 15);
+      expect(randomTicket.isComplete, isTrue);
+
+      // Verify numbers match column decade bounds
+      for (int col = 0; col < 9; col++) {
+        final minVal = col == 0 ? 1 : col * 10;
+        final maxVal = col == 8 ? 90 : (col * 10) + 9;
+        for (int row = 0; row < 3; row++) {
+          final cell = randomTicket.ticketData[row][col];
+          if (cell != null) {
+            expect(cell >= minVal && cell <= maxVal, isTrue);
+          }
+        }
+      }
+    });
+
+    test('TambolaTicketModel json serialization roundtrip and toSelectionMap', () {
+      final generated = TambolaTicketModel.generateRandom('GAGA26000001', 3);
+
+      final json = generated.toJson();
+      expect(json['ticket_id'], 'GAGA26000001');
+      expect(json['sl_no'], 3);
+      expect(json['serial_number'], generated.serialNumber);
+      expect(json['unique_code'], generated.uniqueCode);
+
+      final deserialized = TambolaTicketModel.fromJson(json);
+      expect(deserialized.ticketId, generated.ticketId);
+      expect(deserialized.slNo, generated.slNo);
+      expect(deserialized.filledNumbersCount, 15);
+
+      final selectionMap = deserialized.toSelectionMap();
+      expect(selectionMap['slNo'], 3);
+      expect(selectionMap['serialNumber'], generated.serialNumber);
+      expect(selectionMap['uniqueCode'], generated.uniqueCode);
+      expect(selectionMap['ticketData'], isNotNull);
+      expect(selectionMap['selected'], false);
+    });
+
+    testWidgets('AdminTambolaConfiguratorPage renders ticket details, SL pills, 3x9 grid, and actions',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      final testTicket = TicketModel(
+        ticketId: 'GAGA26000001',
+        ticketTitle: 'GaGa Housie Draw',
+        drawDate: '25/09/2026',
+        drawTime: '07:00 PM',
+        price: '₹20',
+        totalPrize: '₹75000',
+        status: 'Active',
+        prizes: [
+          PrizeItem(name: 'Housefull', price: '₹40000'),
+          PrizeItem(name: '1st Line', price: '₹10000'),
+        ],
+      );
+
+      final ticketProvider = TicketProvider();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<TicketProvider>.value(value: ticketProvider),
+            ChangeNotifierProvider(create: (_) => AuthProvider()),
+          ],
+          child: MaterialApp(
+            home: AdminTambolaConfiguratorPage(
+              ticket: testTicket,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify header & ticket info card
+      expect(find.text('Tambola Setup'), findsOneWidget);
+      expect(find.textContaining('GAGA26000001'), findsWidgets);
+
+      // Verify SL pills 1 through 6
+      expect(find.text('SL 1'), findsOneWidget);
+      expect(find.text('SL 2'), findsOneWidget);
+      expect(find.text('SL 3'), findsOneWidget);
+      expect(find.text('SL 4'), findsOneWidget);
+      expect(find.text('SL 5'), findsOneWidget);
+      expect(find.text('SL 6'), findsOneWidget);
+
+      // Verify empty initial state (0 / 15 Numbers)
+      expect(find.text('0 / 15 Numbers'), findsOneWidget);
+
+      // Verify Quick Action buttons
+      expect(find.text('Auto-Fill SL'), findsOneWidget);
+      expect(find.text('Fill All 6 SL'), findsOneWidget);
+      expect(find.text('Clear'), findsOneWidget);
+
+      // Verify Number Bank Tray
+      expect(find.text('Number Bank • Drag or Tap to Place'), findsOneWidget);
+      expect(find.text('All (1-90)'), findsOneWidget);
+
+      // Tap 'Auto-Fill SL' to fill SL 1
+      await tester.tap(find.text('Auto-Fill SL'));
+      await tester.pumpAndSettle();
+
+      // SL 1 should now be 15 / 15 Numbers
+      expect(find.text('15 / 15 Numbers'), findsOneWidget);
+
+      // Tap 'Clear' to reset SL 1
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+
+      // SL 1 should now be back to 0 / 15 Numbers
+      expect(find.text('0 / 15 Numbers'), findsOneWidget);
+
+      // Tap 'Fill All 6 SL' to fill all 6 tickets at once
+      await tester.tap(find.text('Fill All 6 SL'));
+      await tester.pumpAndSettle();
+
+      // SL 1 should be 15 / 15 and overall completion 6 of 6
+      expect(find.text('15 / 15 Numbers'), findsOneWidget);
+      expect(find.text('6 of 6 Complete'), findsOneWidget);
+      expect(find.text('90/90 Total Numbers Set'), findsOneWidget);
+
+      // Bottom Save button is present and enabled
+      expect(find.text('Save Tambola Tickets'), findsOneWidget);
     });
   });
 }
