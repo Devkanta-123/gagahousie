@@ -264,9 +264,55 @@ class TicketService {
     }
   }
 
+  /// Fetch set of ticket_ids that have tambola tickets configured with numbers
+  Future<Set<String>> fetchTicketIdsWithTambola() async {
+    final client = SupabaseService.instance.client;
+    if (client == null || !SupabaseConfig.isConfigured) {
+      return {};
+    }
+
+    try {
+      final response = await client
+          .from(tambolaTicketsTable)
+          .select('ticket_id, ticket_data');
+
+      final List<dynamic> data = response as List<dynamic>;
+      final set = <String>{};
+      for (final item in data) {
+        final tid = item['ticket_id']?.toString();
+        final rawGrid = item['ticket_data'];
+        bool hasNumbers = false;
+        if (rawGrid is List) {
+          for (final row in rawGrid) {
+            if (row is List && row.any((cell) => cell != null)) {
+              hasNumbers = true;
+              break;
+            }
+          }
+        }
+        if (tid != null && tid.isNotEmpty && hasNumbers) {
+          set.add(tid);
+        }
+      }
+      return set;
+    } catch (e) {
+      debugPrint('⚠️ [TAMBOLA TICKET_IDS FETCH ERROR] $e');
+      return {};
+    }
+  }
+
   /// Save or upsert tambola tickets for a given draw ticket_id
   Future<bool> saveTambolaTickets(
       String ticketId, List<TambolaTicketModel> tickets) async {
+    // Enforce max 15 numbers validation per Tambola ticket
+    for (final ticket in tickets) {
+      if (ticket.filledNumbersCount > 15) {
+        debugPrint(
+            '❌ [VALIDATION ERROR] SL ${ticket.slNo} has ${ticket.filledNumbersCount} numbers. Max allowed is 15.');
+        return false;
+      }
+    }
+
     final client = SupabaseService.instance.client;
     if (client == null || !SupabaseConfig.isConfigured) {
       debugPrint('ℹ️ [TAMBOLA] Supabase not connected. Simulated local save.');

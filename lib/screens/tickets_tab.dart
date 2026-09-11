@@ -69,15 +69,15 @@ class TicketsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    List<Map<String, String>> displayTickets = tickets;
+    List<Map<String, String>> displayTickets = [];
     TicketProvider? provider;
     try {
       provider = Provider.of<TicketProvider>(context);
-      if (provider.liveTicketsMap.isNotEmpty) {
-        displayTickets = provider.liveTicketsMap;
-      }
+      // Respect Provider's DB state directly - shows 0 records when DB has no data
+      displayTickets = provider.liveTicketsMap;
     } catch (_) {
-      // Fallback if TicketProvider is not in tree
+      // Fallback only if TicketProvider is not in tree (isolated tests)
+      displayTickets = tickets;
     }
 
     return Column(
@@ -138,29 +138,97 @@ class TicketsTab extends StatelessWidget {
                 await provider.fetchTickets();
               }
             },
-            child: ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
-              ),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppDimens.paddingLarge),
-              itemCount: displayTickets.length,
-              itemBuilder: (context, index) {
-                return GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => TicketSelectionPage(
-                          ticket: displayTickets[index],
-                        ),
+            child: displayTickets.isEmpty
+                ? SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: AppDimens.paddingLarge,
+                        vertical: 24,
                       ),
-                    );
-                  },
-                  child: _buildTicketCard(displayTickets[index]),
-                );
-              },
-            ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 32,
+                      ),
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: AppColors.primaryGreen.withOpacity(0.15),
+                          width: 1.0,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primaryGreen.withOpacity(0.04),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryGreen.withOpacity(0.08),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.confirmation_number_outlined,
+                              color: AppColors.primaryGreen,
+                              size: 26,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'No Live Tickets Available',
+                            style: TextStyle(
+                              color: Color(0xFF2C3E50),
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Tickets will appear once published with configured Tambola numbers.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppDimens.paddingLarge),
+                    itemCount: displayTickets.length,
+                    itemBuilder: (context, index) {
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => TicketSelectionPage(
+                                ticket: displayTickets[index],
+                              ),
+                            ),
+                          );
+                        },
+                        child: _buildTicketCard(displayTickets[index]),
+                      );
+                    },
+                  ),
           ),
         ),
       ],

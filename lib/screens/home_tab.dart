@@ -135,14 +135,12 @@ class _HomeTabState extends State<HomeTab> {
   List<Map<String, dynamic>> _getActiveUpcomingTickets() {
     try {
       final provider = Provider.of<TicketProvider>(context);
-      final list = provider.upcomingTicketsMap;
-      if (list.isNotEmpty) {
-        return list;
-      }
+      // Respect Provider's DB state directly - returns 0 records when DB is empty!
+      return provider.upcomingTicketsMap;
     } catch (_) {
-      // Fallback if TicketProvider is not in the widget tree
+      // Fallback only if TicketProvider is not mounted in tree (isolated tests)
+      return upcomingTickets;
     }
-    return upcomingTickets;
   }
 
   @override
@@ -420,6 +418,117 @@ class _HomeTabState extends State<HomeTab> {
   Widget _buildUpcomingTicketsSlider(List<Map<String, dynamic>> activeTickets) {
     final int totalTickets = activeTickets.length;
     final int totalVirtualPages = totalTickets * _loopMultiplier;
+
+    if (totalTickets == 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Section Header
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppDimens.paddingLarge,
+              vertical: 8,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Upcoming Tickets',
+                    style: TextStyle(
+                      color: AppColors.primaryGreen,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: AppColors.primaryGreen.withOpacity(0.18),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: const Text(
+                    '0 Available',
+                    style: TextStyle(
+                      color: AppColors.primaryGreen,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Empty State Container
+          Container(
+            margin: const EdgeInsets.symmetric(
+              horizontal: AppDimens.paddingLarge,
+              vertical: 6,
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: AppColors.primaryGreen.withOpacity(0.15),
+                width: 1.0,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primaryGreen.withOpacity(0.04),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.confirmation_number_outlined,
+                    color: AppColors.primaryGreen,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'No Upcoming Tickets',
+                  style: TextStyle(
+                    color: Color(0xFF2C3E50),
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'There are no active draws scheduled right now.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

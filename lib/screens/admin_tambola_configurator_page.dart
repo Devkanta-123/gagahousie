@@ -111,6 +111,42 @@ class _AdminTambolaConfiguratorPageState
       return;
     }
 
+    final isExistingInTicket = _usedNumbersInActiveTicket.contains(number);
+    final isCellOccupied = _activeTicket.ticketData[row][col] != null;
+
+    // Strict 15 numbers max per Tambola ticket validation
+    if (!isExistingInTicket &&
+        !isCellOccupied &&
+        _activeTicket.filledNumbersCount >= 15) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              '⚠️ Maximum 15 numbers allowed per Tambola ticket. Cannot add more.'),
+          backgroundColor: Color(0xFFE53935),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Row 5-number maximum limit validation
+    final rowCount =
+        _activeTicket.ticketData[row].where((c) => c != null).length;
+    final isReplacingInRow = _activeTicket.ticketData[row][col] != null;
+    final isMovingWithinSameRow =
+        _activeTicket.ticketData[row].contains(number);
+    if (!isReplacingInRow && !isMovingWithinSameRow && rowCount >= 5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('⚠️ Row ${row + 1} already has maximum 5 numbers.'),
+          backgroundColor: Colors.orange.shade800,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     final newGrid = List<List<int?>>.from(
       _activeTicket.ticketData.map((r) => List<int?>.from(r)),
     );
@@ -147,6 +183,20 @@ class _AdminTambolaConfiguratorPageState
 
   /// Tap-to-place helper: places number in the first available empty slot of that column
   void _tapToPlace(int number) {
+    final isExistingInTicket = _usedNumbersInActiveTicket.contains(number);
+    if (!isExistingInTicket && _activeTicket.filledNumbersCount >= 15) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              '⚠️ Maximum 15 numbers allowed per Tambola ticket. Cannot add more.'),
+          backgroundColor: Color(0xFFE53935),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     int targetCol = -1;
     for (int col = 0; col < 9; col++) {
       if (isValidForColumn(number, col)) {
@@ -156,19 +206,24 @@ class _AdminTambolaConfiguratorPageState
     }
     if (targetCol == -1) return;
 
-    // Find first empty cell in this column
+    // Find first empty cell in this column where row has < 5 numbers
     for (int row = 0; row < 3; row++) {
       if (_activeTicket.ticketData[row][targetCol] == null) {
-        _setCell(row, targetCol, number);
-        return;
+        final rowCount =
+            _activeTicket.ticketData[row].where((c) => c != null).length;
+        if (rowCount < 5) {
+          _setCell(row, targetCol, number);
+          return;
+        }
       }
     }
 
-    // If column is already full (3 rows)
+    // If column is full or rows in that column already have 5 numbers
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Column ${targetCol + 1} is already full in this ticket.'),
-        duration: const Duration(milliseconds: 800),
+        content: Text(
+            'Cannot place in Column ${targetCol + 1} (already full or row has 5 numbers).'),
+        duration: const Duration(milliseconds: 1200),
       ),
     );
   }
@@ -227,6 +282,36 @@ class _AdminTambolaConfiguratorPageState
 
   /// Save all tickets to Supabase DB
   Future<void> _handleSave() async {
+    // Validate maximum 15 numbers per ticket constraint
+    for (int i = 0; i < _tickets.length; i++) {
+      final t = _tickets[i];
+      if (t.filledNumbersCount > 15) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                '⚠️ SL ${i + 1} has ${t.filledNumbersCount} numbers. Maximum allowed is 15.'),
+            backgroundColor: const Color(0xFFE53935),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+      for (int r = 0; r < 3; r++) {
+        final rowCount = t.ticketData[r].where((c) => c != null).length;
+        if (rowCount > 5) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  '⚠️ SL ${i + 1} Row ${r + 1} has $rowCount numbers. Maximum allowed is 5.'),
+              backgroundColor: const Color(0xFFE53935),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          return;
+        }
+      }
+    }
+
     setState(() => _isSaving = true);
     final provider = Provider.of<TicketProvider>(context, listen: false);
 
@@ -662,7 +747,28 @@ class _AdminTambolaConfiguratorPageState
                   return Expanded(
                     child: DragTarget<int>(
                       onWillAcceptWithDetails: (details) {
-                        return isValidForColumn(details.data, colIndex);
+                        final val = details.data;
+                        if (!isValidForColumn(val, colIndex)) return false;
+                        final isExisting =
+                            _usedNumbersInActiveTicket.contains(val);
+                        final isFree = grid[rowIndex][colIndex] == null;
+                        if (!isExisting &&
+                            isFree &&
+                            _activeTicket.filledNumbersCount >= 15) {
+                          return false; // Reject exceeding 15 numbers limit
+                        }
+                        final rowCount =
+                            grid[rowIndex].where((c) => c != null).length;
+                        final isReplacingInRow =
+                            grid[rowIndex][colIndex] != null;
+                        final isMovingInSameRow =
+                            grid[rowIndex].contains(val);
+                        if (!isReplacingInRow &&
+                            !isMovingInSameRow &&
+                            rowCount >= 5) {
+                          return false; // Reject exceeding 5 numbers per row limit
+                        }
+                        return true;
                       },
                       onAcceptWithDetails: (details) {
                         _setCell(rowIndex, colIndex, details.data);
@@ -1008,7 +1114,7 @@ class _AdminTambolaConfiguratorPageState
       return chip;
     }
 
-    return Draggable<int>(
+    final draggable = Draggable<int>(
       data: number,
       feedback: Material(
         elevation: 6,
@@ -1043,10 +1149,14 @@ class _AdminTambolaConfiguratorPageState
         opacity: 0.3,
         child: chip,
       ),
-      child: GestureDetector(
-        onTap: () => _tapToPlace(number),
-        child: chip,
-      ),
+      child: chip,
+    );
+
+    return GestureDetector(
+      key: ValueKey('number_chip_$number'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _tapToPlace(number),
+      child: draggable,
     );
   }
 

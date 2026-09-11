@@ -1061,4 +1061,198 @@ void main() {
       expect(find.text('Save Tambola Tickets'), findsOneWidget);
     });
   });
+
+  group('DB Zero Records, Tambola Filtering & 15-Number Max Validation Tests', () {
+    test('TicketProvider returns 0 records and no dummy data when DB is empty', () {
+      final provider = TicketProvider();
+      // Ensure tickets list is empty
+      provider.setTickets([]);
+      provider.setTicketIdsWithTambola({});
+
+      expect(provider.tickets.length, 0);
+      expect(provider.totalTicketsCount, 0);
+      expect(provider.upcomingTicketsMap.length, 0);
+      expect(provider.liveTicketsMap.length, 0);
+      expect(provider.ticketsWithTambola.length, 0);
+    });
+
+    test('TicketProvider only exposes tickets that have tambola numbers configured', () {
+      final provider = TicketProvider();
+      final ticket1 = TicketModel(
+        ticketId: 'GAGA26000001',
+        ticketTitle: 'Draw 1 (With Tambola)',
+        drawDate: '25/09/2026',
+        drawTime: '07:00 PM',
+        prizes: [PrizeItem(name: 'Housefull', price: '₹40000')],
+      );
+      final ticket2 = TicketModel(
+        ticketId: 'GAGA26000002',
+        ticketTitle: 'Draw 2 (No Tambola)',
+        drawDate: '26/09/2026',
+        drawTime: '08:00 PM',
+        prizes: [PrizeItem(name: 'Housefull', price: '₹50000')],
+      );
+
+      provider.setTickets([ticket1, ticket2]);
+
+      // Initially neither has tambola configured
+      provider.setTicketIdsWithTambola({});
+      expect(provider.upcomingTicketsMap.length, 0);
+      expect(provider.liveTicketsMap.length, 0);
+
+      // Configure tambola for ticket1 only
+      provider.setCachedTambolaTickets(
+        'GAGA26000001',
+        [TambolaTicketModel.generateRandom('GAGA26000001', 1)],
+      );
+
+      expect(provider.hasTambolaTickets('GAGA26000001'), isTrue);
+      expect(provider.hasTambolaTickets('GAGA26000002'), isFalse);
+
+      // Only ticket1 should appear for users!
+      expect(provider.upcomingTicketsMap.length, 1);
+      expect(provider.upcomingTicketsMap.first['ticket'], 'Draw 1 (With Tambola)');
+      expect(provider.liveTicketsMap.length, 1);
+      expect(provider.liveTicketsMap.first['ticket'], 'Draw 1 (With Tambola)');
+    });
+
+    test('TambolaTicketModel enforces max 15 numbers limit', () {
+      final emptyTicket = TambolaTicketModel.empty('GAGA26000001', 1);
+      expect(emptyTicket.isValid, isTrue);
+      expect(emptyTicket.hasExceededLimit, isFalse);
+
+      final fullTicket = TambolaTicketModel.generateRandom('GAGA26000001', 1);
+      expect(fullTicket.filledNumbersCount, 15);
+      expect(fullTicket.isValid, isTrue);
+      expect(fullTicket.isComplete, isTrue);
+      expect(fullTicket.hasExceededLimit, isFalse);
+
+      // 16 numbers grid (invalid)
+      final grid16 = List.generate(3, (r) => List<int?>.from(fullTicket.ticketData[r]));
+      // Find an empty cell to put a 16th number
+      bool added = false;
+      for (int r = 0; r < 3 && !added; r++) {
+        for (int c = 0; c < 9 && !added; c++) {
+          if (grid16[r][c] == null) {
+            grid16[r][c] = 99;
+            added = true;
+          }
+        }
+      }
+      final invalidTicket = fullTicket.copyWith(ticketData: grid16);
+      expect(invalidTicket.filledNumbersCount, 16);
+      expect(invalidTicket.isValid, isFalse);
+      expect(invalidTicket.hasExceededLimit, isTrue);
+    });
+
+    testWidgets('HomeTab shows 0 Available and No Upcoming Tickets when DB is empty',
+        (WidgetTester tester) async {
+      final provider = TicketProvider();
+      provider.setTickets([]);
+      provider.setTicketIdsWithTambola({});
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TicketProvider>.value(
+          value: provider,
+          child: const MaterialApp(
+            home: Scaffold(
+              backgroundColor: AppColors.background,
+              body: HomeTab(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Upcoming Tickets'), findsOneWidget);
+      expect(find.text('0 Available'), findsOneWidget);
+      expect(find.text('No Upcoming Tickets'), findsOneWidget);
+      // Verify no upcoming tickets are displayed
+      expect(find.text('There are no active draws scheduled right now.'), findsOneWidget);
+    });
+
+    testWidgets('TicketsTab shows 0 Active and No Live Tickets Available when DB is empty',
+        (WidgetTester tester) async {
+      final provider = TicketProvider();
+      provider.setTickets([]);
+      provider.setTicketIdsWithTambola({});
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<TicketProvider>.value(
+          value: provider,
+          child: const MaterialApp(
+            home: Scaffold(
+              backgroundColor: AppColors.background,
+              body: TicketsTab(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Live Tickets'), findsOneWidget);
+      expect(find.text('0 Active'), findsOneWidget);
+      expect(find.text('No Live Tickets Available'), findsOneWidget);
+      // Dummy tickets must NOT be displayed
+      expect(find.text('Ticket #001'), findsNothing);
+      expect(find.text('Ticket #002'), findsNothing);
+    });
+
+    testWidgets('AdminTambolaConfiguratorPage strictly prevents adding more than 15 numbers',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      final testTicket = TicketModel(
+        ticketId: 'GAGA26000001',
+        ticketTitle: 'GaGa Housie Draw',
+        drawDate: '25/09/2026',
+        drawTime: '07:00 PM',
+        prizes: [PrizeItem(name: 'Housefull', price: '₹40000')],
+      );
+
+      final ticketProvider = TicketProvider();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<TicketProvider>.value(value: ticketProvider),
+            ChangeNotifierProvider(create: (_) => AuthProvider()),
+          ],
+          child: MaterialApp(
+            home: AdminTambolaConfiguratorPage(
+              ticket: testTicket,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Auto-fill SL 1 to reach 15/15
+      await tester.tap(find.text('Auto-Fill SL'));
+      await tester.pumpAndSettle();
+      expect(find.text('15 / 15 Numbers'), findsOneWidget);
+
+      // Find an unused number from the tray using ValueKey to attempt adding a 16th number
+      for (int n = 1; n <= 90; n++) {
+        final chipFinder = find.byKey(ValueKey('number_chip_$n'));
+        if (chipFinder.evaluate().isNotEmpty) {
+          await tester.ensureVisible(chipFinder);
+          await tester.tap(chipFinder);
+          await tester.pumpAndSettle();
+          break;
+        }
+      }
+
+      // SnackBar should warn about 15 max numbers
+      expect(
+        find.text('⚠️ Maximum 15 numbers allowed per Tambola ticket. Cannot add more.'),
+        findsOneWidget,
+      );
+
+      // Ticket must still have exactly 15 numbers, never 16
+      expect(find.text('15 / 15 Numbers'), findsOneWidget);
+    });
+  });
 }

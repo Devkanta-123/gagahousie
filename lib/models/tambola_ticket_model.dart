@@ -135,11 +135,23 @@ class TambolaTicketModel {
     return count;
   }
 
+  /// Maximum allowed numbers per Tambola ticket (exactly 15)
+  static const int maxNumbersPerTicket = 15;
+
+  /// Maximum allowed numbers per row (5 numbers per row)
+  static const int maxNumbersPerRow = 5;
+
   /// Whether the ticket is completely empty
   bool get isEmpty => filledNumbersCount == 0;
 
   /// Check if the ticket is complete (15 numbers)
-  bool get isComplete => filledNumbersCount == 15;
+  bool get isComplete => filledNumbersCount == maxNumbersPerTicket;
+
+  /// Check if the ticket has exceeded the 15-number maximum limit
+  bool get hasExceededLimit => filledNumbersCount > maxNumbersPerTicket;
+
+  /// Check if ticket has a valid number count (<= 15)
+  bool get isValid => filledNumbersCount <= maxNumbersPerTicket;
 
   Map<String, dynamic> toJson() {
     return {

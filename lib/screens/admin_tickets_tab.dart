@@ -602,21 +602,73 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE8F5E9),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      ticket.status,
-                      style: const TextStyle(
-                        color: Color(0xFF2E7D32),
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.bold,
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE8F5E9),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          ticket.status,
+                          style: const TextStyle(
+                            color: Color(0xFF2E7D32),
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                    ),
+                      Builder(builder: (context) {
+                        final hasTambola = Provider.of<TicketProvider>(
+                                context,
+                                listen: false)
+                            .hasTambolaTickets(ticket.ticketId);
+                        return Container(
+                          margin: const EdgeInsets.only(left: 6),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: hasTambola
+                                ? const Color(0xFFE0F2FE)
+                                : const Color(0xFFFFFBEB),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: hasTambola
+                                  ? const Color(0xFFBAE6FD)
+                                  : const Color(0xFFFDE68A),
+                              width: 0.6,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                hasTambola
+                                    ? Icons.grid_view_rounded
+                                    : Icons.warning_amber_rounded,
+                                size: 10.5,
+                                color: hasTambola
+                                    ? const Color(0xFF0284C7)
+                                    : const Color(0xFFD97706),
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                hasTambola ? 'Tambola Set' : 'Needs Tambola',
+                                style: TextStyle(
+                                  color: hasTambola
+                                      ? const Color(0xFF0284C7)
+                                      : const Color(0xFFD97706),
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
                   ),
                 ],
               ),

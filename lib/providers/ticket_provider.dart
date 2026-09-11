@@ -5,6 +5,7 @@ import '../services/ticket_service.dart';
 
 class TicketProvider extends ChangeNotifier {
   List<TicketModel> _tickets = [];
+  Set<String> _ticketIdsWithTambola = {};
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -12,24 +13,36 @@ class TicketProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  /// Returns maps compatible with HomeTab upcoming ticket carousel
-  List<Map<String, dynamic>> get upcomingTicketsMap {
-    if (_tickets.isEmpty) {
-      return TicketService.defaultInitialTickets()
-          .map((t) => t.toUpcomingMap())
-          .toList();
-    }
-    return _tickets.map((t) => t.toUpcomingMap()).toList();
+  /// Check if a draw ticket has tambola numbers configured
+  bool hasTambolaTickets(String ticketId) {
+    if (_ticketIdsWithTambola.contains(ticketId)) return true;
+    final cached = _tambolaTicketsCache[ticketId];
+    return cached != null && cached.any((t) => t.filledNumbersCount > 0);
   }
 
-  /// Returns maps compatible with TicketsTab live tickets list
+  /// All tickets that have tambola tickets configured with numbers
+  List<TicketModel> get ticketsWithTambola {
+    return _tickets.where((t) => hasTambolaTickets(t.ticketId)).toList();
+  }
+
+  /// Set the configured tambola ticket IDs directly (useful for tests or demo)
+  void setTicketIdsWithTambola(Set<String> ids) {
+    _ticketIdsWithTambola = Set.from(ids);
+    notifyListeners();
+  }
+
+  /// Returns maps compatible with HomeTab upcoming ticket carousel.
+  /// Shows ONLY tickets that have tambola tickets configured.
+  /// Shows 0 records (empty list) when DB is empty - NEVER falls back to dummy data!
+  List<Map<String, dynamic>> get upcomingTicketsMap {
+    return ticketsWithTambola.map((t) => t.toUpcomingMap()).toList();
+  }
+
+  /// Returns maps compatible with TicketsTab live tickets list.
+  /// Shows ONLY tickets that have tambola tickets configured.
+  /// Shows 0 records (empty list) when DB is empty - NEVER falls back to dummy data!
   List<Map<String, String>> get liveTicketsMap {
-    if (_tickets.isEmpty) {
-      return TicketService.defaultInitialTickets()
-          .map((t) => t.toLiveTicketMap())
-          .toList();
-    }
-    return _tickets.map((t) => t.toLiveTicketMap()).toList();
+    return ticketsWithTambola.map((t) => t.toLiveTicketMap()).toList();
   }
 
   int get totalTicketsCount => _tickets.length;
@@ -60,6 +73,17 @@ class TicketProvider extends ChangeNotifier {
     try {
       final fetched = await TicketService.instance.fetchTickets();
       _tickets = fetched;
+
+      final ids = await TicketService.instance.fetchTicketIdsWithTambola();
+      _ticketIdsWithTambola = ids;
+
+      // Also merge any locally cached tambola tickets that have numbers
+      for (final entry in _tambolaTicketsCache.entries) {
+        if (entry.value.any((t) => t.filledNumbersCount > 0)) {
+          _ticketIdsWithTambola.add(entry.key);
+        }
+      }
+
       _errorMessage = null;
     } catch (e) {
       _errorMessage = e.toString();
@@ -117,6 +141,8 @@ class TicketProvider extends ChangeNotifier {
     final success = await TicketService.instance.deleteTicket(ticketId);
     if (success) {
       _tickets.removeWhere((t) => t.ticketId == ticketId);
+      _tambolaTicketsCache.remove(ticketId);
+      _ticketIdsWithTambola.remove(ticketId);
       notifyListeners();
     }
     return success;
@@ -139,6 +165,9 @@ class TicketProvider extends ChangeNotifier {
     final fetched = await TicketService.instance.fetchTambolaTickets(ticketId);
     if (fetched.isNotEmpty) {
       _tambolaTicketsCache[ticketId] = fetched;
+      if (fetched.any((t) => t.filledNumbersCount > 0)) {
+        _ticketIdsWithTambola.add(ticketId);
+      }
       notifyListeners();
     }
     return fetched;
@@ -154,6 +183,11 @@ class TicketProvider extends ChangeNotifier {
         await TicketService.instance.saveTambolaTickets(ticketId, tickets);
     if (success) {
       _tambolaTicketsCache[ticketId] = List.from(tickets);
+      if (tickets.any((t) => t.filledNumbersCount > 0)) {
+        _ticketIdsWithTambola.add(ticketId);
+      } else {
+        _ticketIdsWithTambola.remove(ticketId);
+      }
     }
     _isLoading = false;
     notifyListeners();
@@ -164,6 +198,11 @@ class TicketProvider extends ChangeNotifier {
   void setCachedTambolaTickets(
       String ticketId, List<TambolaTicketModel> tickets) {
     _tambolaTicketsCache[ticketId] = List.from(tickets);
+    if (tickets.any((t) => t.filledNumbersCount > 0)) {
+      _ticketIdsWithTambola.add(ticketId);
+    } else {
+      _ticketIdsWithTambola.remove(ticketId);
+    }
     notifyListeners();
   }
 }
