@@ -207,9 +207,12 @@ class TambolaTicketModel {
 
   /// Convert to map format expected by ticket_selection_page.dart
   Map<String, dynamic> toSelectionMap() {
+    final displayName = (playerName.isEmpty || playerName == 'Available')
+        ? 'Ticket #$slNo'
+        : playerName;
     return {
       'slNo': slNo,
-      'playerName': playerName,
+      'playerName': displayName,
       'serialNumber': serialNumber,
       'uniqueCode': uniqueCode,
       'selected': false,

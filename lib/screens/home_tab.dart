@@ -875,13 +875,18 @@ class _HomeTabState extends State<HomeTab> {
           // Buy Now Button - Tightly positioned right under price details
           GestureDetector(
             onTap: () {
+              final rawId = (ticket['id'] ??
+                      ticket['ticketId'] ??
+                      ticket['ticket_id'] ??
+                      'TKT${index + 1}')
+                  .toString();
               final Map<String, String> ticketData = {
                 'ticket': ticket['ticket'] as String? ?? 'Ticket',
                 'date': ticket['date'] as String? ?? '',
                 'time': ticket['time'] as String? ?? '',
-                'price': '₹10',
-                'status': 'Active',
-                'id': 'TKT${index + 1}',
+                'price': ticket['price'] as String? ?? '₹20',
+                'status': ticket['status'] as String? ?? 'Active',
+                'id': rawId,
               };
               Navigator.push(
                 context,

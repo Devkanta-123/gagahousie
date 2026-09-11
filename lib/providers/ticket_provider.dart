@@ -16,7 +16,12 @@ class TicketProvider extends ChangeNotifier {
   /// Check if a draw ticket has tambola numbers configured
   bool hasTambolaTickets(String ticketId) {
     if (_ticketIdsWithTambola.contains(ticketId)) return true;
-    final cached = _tambolaTicketsCache[ticketId];
+    final clean = ticketId.replaceAll(RegExp(r'[\s\-_#]'), '').toLowerCase();
+    if (_ticketIdsWithTambola.any((id) =>
+        id.replaceAll(RegExp(r'[\s\-_#]'), '').toLowerCase() == clean)) {
+      return true;
+    }
+    final cached = getCachedTambolaTickets(ticketId);
     return cached != null && cached.any((t) => t.filledNumbersCount > 0);
   }
 
@@ -157,16 +162,32 @@ class TicketProvider extends ChangeNotifier {
   // Tambola tickets cache keyed by ticketId
   final Map<String, List<TambolaTicketModel>> _tambolaTicketsCache = {};
 
-  List<TambolaTicketModel>? getCachedTambolaTickets(String ticketId) =>
-      _tambolaTicketsCache[ticketId];
+  List<TambolaTicketModel>? getCachedTambolaTickets(String ticketId) {
+    if (_tambolaTicketsCache.containsKey(ticketId)) {
+      return _tambolaTicketsCache[ticketId];
+    }
+    final clean = ticketId.replaceAll(RegExp(r'[\s\-_#]'), '').toLowerCase();
+    for (final entry in _tambolaTicketsCache.entries) {
+      final entryClean =
+          entry.key.replaceAll(RegExp(r'[\s\-_#]'), '').toLowerCase();
+      if (entryClean == clean) {
+        return entry.value;
+      }
+    }
+    return null;
+  }
 
   /// Fetch tambola tickets for a draw ticket
   Future<List<TambolaTicketModel>> fetchTambolaTickets(String ticketId) async {
-    final fetched = await TicketService.instance.fetchTambolaTickets(ticketId);
+    final cleanId =
+        ticketId.startsWith('#') ? ticketId.substring(1).trim() : ticketId.trim();
+    final fetched = await TicketService.instance.fetchTambolaTickets(cleanId);
     if (fetched.isNotEmpty) {
       _tambolaTicketsCache[ticketId] = fetched;
+      _tambolaTicketsCache[cleanId] = fetched;
       if (fetched.any((t) => t.filledNumbersCount > 0)) {
         _ticketIdsWithTambola.add(ticketId);
+        _ticketIdsWithTambola.add(cleanId);
       }
       notifyListeners();
     }

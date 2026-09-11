@@ -18,11 +18,11 @@ import 'package:gaga_housie/screens/ticket_purchase_page.dart';
 import 'package:gaga_housie/screens/qr_scanner_page.dart';
 import 'package:gaga_housie/screens/admin_tickets_tab.dart';
 import 'package:gaga_housie/screens/admin_tambola_configurator_page.dart';
+import 'package:gaga_housie/screens/ticket_selection_page.dart';
 import 'package:gaga_housie/models/tambola_ticket_model.dart';
 import 'package:gaga_housie/models/ticket_model.dart';
 import 'package:gaga_housie/providers/auth_provider.dart';
 import 'package:gaga_housie/providers/ticket_provider.dart';
-import 'package:gaga_housie/widgets/gaga_app_header.dart';
 import 'package:gaga_housie/widgets/gaga_header.dart';
 import 'package:gaga_housie/utils/constants.dart';
 
@@ -1253,6 +1253,188 @@ void main() {
 
       // Ticket must still have exactly 15 numbers, never 16
       expect(find.text('15 / 15 Numbers'), findsOneWidget);
+    });
+  });
+
+  group('TicketSelectionPage Dynamic Tambola Integration Tests', () {
+    testWidgets('displays admin-configured tambola tickets and no hardcoded dummy data',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      final ticketProvider = TicketProvider();
+
+      // Create admin-configured tambola tickets with specific numbers
+      final customGrid1 = List.generate(3, (_) => List<int?>.filled(9, null));
+      customGrid1[0][0] = 7;
+      customGrid1[0][1] = 14;
+      customGrid1[1][2] = 23;
+      customGrid1[1][3] = 35;
+      customGrid1[2][4] = 48;
+
+      final customGrid2 = List.generate(3, (_) => List<int?>.filled(9, null));
+      customGrid2[0][0] = 3;
+      customGrid2[0][2] = 29;
+      customGrid2[1][4] = 44;
+      customGrid2[1][5] = 52;
+      customGrid2[2][8] = 88;
+
+      final adminTicket1 = TambolaTicketModel(
+        ticketId: 'GAGA26000001',
+        slNo: 1,
+        serialNumber: 'SN: GAGA26000001-01',
+        uniqueCode: 'CODE: GH-GAGA26000001-SL1',
+        playerName: 'Admin Cell 1',
+        ticketData: customGrid1,
+      );
+
+      final adminTicket2 = TambolaTicketModel(
+        ticketId: 'GAGA26000001',
+        slNo: 2,
+        serialNumber: 'SN: GAGA26000001-02',
+        uniqueCode: 'CODE: GH-GAGA26000001-SL2',
+        playerName: 'Admin Cell 2',
+        ticketData: customGrid2,
+      );
+
+      // Store in provider cache
+      ticketProvider.setCachedTambolaTickets(
+        'GAGA26000001',
+        [adminTicket1, adminTicket2],
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<TicketProvider>.value(value: ticketProvider),
+            ChangeNotifierProvider(create: (_) => AuthProvider()),
+          ],
+          child: const MaterialApp(
+            home: TicketSelectionPage(
+              ticket: {
+                'id': 'GAGA26000001',
+                'ticket': 'GAGA Housie #1',
+                'price': '₹20',
+                'date': '25/09/2026',
+                'status': 'Active',
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify admin cell numbers are rendered in the tambola grid
+      expect(
+        find.byWidgetPredicate(
+            (w) => w is Text && w.data == '7' && w.style?.fontSize == 10),
+        findsOneWidget,
+      );
+      expect(find.text('14'), findsOneWidget);
+      expect(find.text('23'), findsOneWidget);
+      expect(find.text('35'), findsOneWidget);
+      expect(find.text('48'), findsOneWidget);
+      expect(find.text('88'), findsOneWidget);
+
+      // Verify admin player names / labels are displayed
+      expect(find.text('Admin Cell 1'), findsOneWidget);
+      expect(find.text('Admin Cell 2'), findsOneWidget);
+      expect(find.text('SN: GAGA26000001-01'), findsOneWidget);
+      expect(find.text('CODE: GH-GAGA26000001-SL1'), findsOneWidget);
+
+      // Verify dummy data from before is NOT present anywhere
+      expect(find.text('Rahul Sharma'), findsNothing);
+      expect(find.text('Priya Patel'), findsNothing);
+      expect(find.text('Amit Kumar'), findsNothing);
+      expect(find.text('CODE: RS-AMB-001'), findsNothing);
+      expect(find.text('SN: TKT-001'), findsNothing);
+    });
+
+    testWidgets('handles interactive ticket selection and updates total price',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      final ticketProvider = TicketProvider();
+
+      final grid1 = TambolaTicketModel.generateRandomGrid();
+      final grid2 = TambolaTicketModel.generateRandomGrid();
+
+      final adminTicket1 = TambolaTicketModel(
+        ticketId: 'GAGA26000001',
+        slNo: 1,
+        serialNumber: 'SN: GAGA26000001-01',
+        uniqueCode: 'CODE: GH-GAGA26000001-SL1',
+        playerName: 'Ticket #1',
+        ticketData: grid1,
+      );
+
+      final adminTicket2 = TambolaTicketModel(
+        ticketId: 'GAGA26000001',
+        slNo: 2,
+        serialNumber: 'SN: GAGA26000001-02',
+        uniqueCode: 'CODE: GH-GAGA26000001-SL2',
+        playerName: 'Ticket #2',
+        ticketData: grid2,
+      );
+
+      ticketProvider.setCachedTambolaTickets(
+        'GAGA26000001',
+        [adminTicket1, adminTicket2],
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<TicketProvider>.value(value: ticketProvider),
+            ChangeNotifierProvider(create: (_) => AuthProvider()),
+          ],
+          child: const MaterialApp(
+            home: TicketSelectionPage(
+              ticket: {
+                'id': 'GAGA26000001',
+                'ticket': 'GAGA Housie #1',
+                'price': '₹20',
+                'date': '25/09/2026',
+                'status': 'Active',
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Initial state: 0/3 selected, button disabled
+      expect(find.text('0/3'), findsOneWidget);
+      expect(find.text('Select tickets to continue'), findsOneWidget);
+
+      // Tap SL 1
+      await tester.tap(find.text('Ticket #1'));
+      await tester.pumpAndSettle();
+
+      // 1 ticket selected
+      expect(find.text('1/3'), findsOneWidget);
+      expect(find.text('Buy Now (1 selected)'), findsOneWidget);
+      expect(find.text('₹20.00'), findsOneWidget);
+
+      // Tap SL 2
+      await tester.tap(find.text('Ticket #2'));
+      await tester.pumpAndSettle();
+
+      // 2 tickets selected
+      expect(find.text('2/3'), findsOneWidget);
+      expect(find.text('Buy Now (2 selected)'), findsOneWidget);
+      expect(find.text('₹40.00'), findsOneWidget);
+
+      // Tap SL 2 again to deselect
+      await tester.tap(find.text('Ticket #2'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1/3'), findsOneWidget);
+      expect(find.text('Buy Now (1 selected)'), findsOneWidget);
+      expect(find.text('₹20.00'), findsOneWidget);
     });
   });
 }

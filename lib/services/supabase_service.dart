@@ -80,6 +80,17 @@ class SupabaseService {
     }
 
     try {
+      // Prevent duplicate initialize calls if client already exists
+      try {
+        if (Supabase.instance.client != null) {
+          _isInitialized = true;
+          await testConnection();
+          return;
+        }
+      } catch (_) {
+        // Not initialized yet, proceed
+      }
+
       await Supabase.initialize(
         url: url,
         // ignore: deprecated_member_use
@@ -91,11 +102,25 @@ class SupabaseService {
       // Test connection immediately and print status
       await testConnection();
     } catch (e) {
-      _isInitialized = false;
-      _isConnected = false;
-      _lastConnectionMessage = 'Initialization failed: $e';
-      debugPrint('❌ [SUPABASE INIT ERROR]: $e');
-      debugPrint('==================================================');
+      if (e.toString().contains('already initialized') ||
+          e.toString().contains('You can only initialize Supabase once')) {
+        _isInitialized = true;
+        await testConnection();
+      } else {
+        _isInitialized = false;
+        _isConnected = false;
+        final errLower = e.toString().toLowerCase();
+        if (errLower.contains('socketexception') ||
+            errLower.contains('failed host lookup') ||
+            errLower.contains('network is unreachable')) {
+          _lastConnectionMessage =
+              'No internet connection. Please verify phone Wi-Fi or mobile data.';
+        } else {
+          _lastConnectionMessage = 'Initialization failed: $e';
+        }
+        debugPrint('❌ [SUPABASE INIT ERROR]: $e');
+        debugPrint('==================================================');
+      }
     }
   }
 
@@ -179,7 +204,16 @@ class SupabaseService {
       );
     } catch (e) {
       _isConnected = false;
-      _lastConnectionMessage = 'Connection failed: $e';
+      final errLower = e.toString().toLowerCase();
+      if (errLower.contains('socketexception') ||
+          errLower.contains('failed host lookup') ||
+          errLower.contains('network is unreachable') ||
+          errLower.contains('clientexception')) {
+        _lastConnectionMessage =
+            'No internet connection. Please verify phone Wi-Fi or mobile data.';
+      } else {
+        _lastConnectionMessage = 'Connection failed: $e';
+      }
       debugPrint('❌ [SUPABASE CONNECTION FAILED] Details: $e');
       return SupabaseConnectionResult(
         success: false,
@@ -291,6 +325,17 @@ class SupabaseService {
       rethrow;
     } catch (e) {
       debugPrint('❌ [SUPABASE AUTH ERROR] $e');
+      final errLower = e.toString().toLowerCase();
+      if (errLower.contains('socketexception') ||
+          errLower.contains('failed host lookup') ||
+          errLower.contains('network is unreachable') ||
+          errLower.contains('connection refused') ||
+          errLower.contains('clientexception') ||
+          errLower.contains('handshakeexception')) {
+        throw const SupabaseAuthException(
+          'Unable to reach online database. Please verify your phone internet connection.',
+        );
+      }
       throw SupabaseAuthException('Authentication error: ${e.toString()}');
     }
   }
@@ -419,6 +464,17 @@ class SupabaseService {
       rethrow;
     } catch (e) {
       debugPrint('❌ [SUPABASE REGISTER ERROR] $e');
+      final errLower = e.toString().toLowerCase();
+      if (errLower.contains('socketexception') ||
+          errLower.contains('failed host lookup') ||
+          errLower.contains('network is unreachable') ||
+          errLower.contains('connection refused') ||
+          errLower.contains('clientexception') ||
+          errLower.contains('handshakeexception')) {
+        throw const SupabaseAuthException(
+          'Unable to reach online database. Please verify your phone internet connection.',
+        );
+      }
       throw SupabaseAuthException('Failed to register: ${e.toString()}');
     }
   }

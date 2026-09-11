@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gaga_housie/models/user_model.dart';
 import 'package:gaga_housie/services/supabase_config.dart';
-import 'package:gaga_housie/services/supabase_service.dart';
 import 'package:gaga_housie/utils/validators.dart';
 import 'package:gaga_housie/providers/auth_provider.dart';
 

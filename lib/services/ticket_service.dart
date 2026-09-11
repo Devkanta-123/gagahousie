@@ -83,9 +83,11 @@ class TicketService {
     ];
   }
 
+  SupabaseClient? get client => SupabaseService.instance.client;
+
   /// Fetch all upcoming and active tickets from Supabase DB
   Future<List<TicketModel>> fetchTickets() async {
-    final client = SupabaseService.instance.client;
+    final client = this.client;
     if (client == null || !SupabaseConfig.isConfigured) {
       debugPrint('ℹ️ [TICKETS] Supabase not connected. Returning empty list.');
       return [];
@@ -123,7 +125,7 @@ class TicketService {
 
   /// Update an existing ticket draw in Supabase DB
   Future<TicketModel> updateTicket(TicketModel ticket) async {
-    final client = SupabaseService.instance.client;
+    final client = this.client;
 
     debugPrint('==================================================');
     debugPrint(
@@ -165,7 +167,7 @@ class TicketService {
 
   /// Create and insert a new ticket draw into Supabase DB
   Future<TicketModel> createTicket(TicketModel ticket) async {
-    final client = SupabaseService.instance.client;
+    final client = this.client;
 
     debugPrint('==================================================');
     debugPrint('🎟️ [ADMIN TICKET CREATION] Initiating new ticket creation...');
@@ -206,7 +208,7 @@ class TicketService {
 
   /// Delete a ticket from Supabase DB
   Future<bool> deleteTicket(String ticketId) async {
-    final client = SupabaseService.instance.client;
+    final client = this.client;
     if (client == null || !SupabaseConfig.isConfigured) {
       return true;
     }
@@ -237,7 +239,7 @@ class TicketService {
 
   /// Fetch tambola tickets for a given draw ticket_id from Supabase
   Future<List<TambolaTicketModel>> fetchTambolaTickets(String ticketId) async {
-    final client = SupabaseService.instance.client;
+    final client = this.client;
     if (client == null || !SupabaseConfig.isConfigured) {
       debugPrint('ℹ️ [TAMBOLA] Supabase not connected. Returning empty list.');
       return [];
@@ -266,7 +268,7 @@ class TicketService {
 
   /// Fetch set of ticket_ids that have tambola tickets configured with numbers
   Future<Set<String>> fetchTicketIdsWithTambola() async {
-    final client = SupabaseService.instance.client;
+    final client = this.client;
     if (client == null || !SupabaseConfig.isConfigured) {
       return {};
     }
@@ -313,7 +315,7 @@ class TicketService {
       }
     }
 
-    final client = SupabaseService.instance.client;
+    final client = this.client;
     if (client == null || !SupabaseConfig.isConfigured) {
       debugPrint('ℹ️ [TAMBOLA] Supabase not connected. Simulated local save.');
       return true;
@@ -338,7 +340,7 @@ class TicketService {
 
   /// Delete tambola tickets for a draw
   Future<bool> deleteTambolaTickets(String ticketId) async {
-    final client = SupabaseService.instance.client;
+    final client = this.client;
     if (client == null || !SupabaseConfig.isConfigured) {
       return true;
     }

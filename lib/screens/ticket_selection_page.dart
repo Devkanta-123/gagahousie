@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'dart:math';
 import 'package:provider/provider.dart';
 import '../models/tambola_ticket_model.dart';
 import '../providers/ticket_provider.dart';
@@ -8,7 +7,7 @@ import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 
 class TicketSelectionPage extends StatefulWidget {
-  final Map<String, String> ticket;
+  final Map<dynamic, dynamic> ticket;
 
   const TicketSelectionPage({
     super.key,
@@ -20,152 +19,85 @@ class TicketSelectionPage extends StatefulWidget {
 }
 
 class _TicketSelectionPageState extends State<TicketSelectionPage> {
-  final List<Map<String, dynamic>> tambolaTickets = [
-    {
-      'slNo': 1,
-      'playerName': 'Rahul Sharma',
-      'serialNumber': 'SN: TKT-001',
-      'uniqueCode': 'CODE: RS-AMB-001',
-      'selected': false,
-      'ticketData': null,
-    },
-    {
-      'slNo': 2,
-      'playerName': 'Priya Patel',
-      'serialNumber': 'SN: TKT-002',
-      'uniqueCode': 'CODE: PP-AMB-002',
-      'selected': false,
-      'ticketData': null,
-    },
-    {
-      'slNo': 3,
-      'playerName': 'Amit Kumar',
-      'serialNumber': 'SN: TKT-003',
-      'uniqueCode': 'CODE: AK-AMB-003',
-      'selected': false,
-      'ticketData': null,
-    },
-    {
-      'slNo': 4,
-      'playerName': 'Sneha Reddy',
-      'serialNumber': 'SN: TKT-004',
-      'uniqueCode': 'CODE: SR-AMB-004',
-      'selected': false,
-      'ticketData': null,
-    },
-    {
-      'slNo': 5,
-      'playerName': 'Vikram Singh',
-      'serialNumber': 'SN: TKT-005',
-      'uniqueCode': 'CODE: VS-AMB-005',
-      'selected': false,
-      'ticketData': null,
-    },
-    {
-      'slNo': 6,
-      'playerName': 'Ananya Iyer',
-      'serialNumber': 'SN: TKT-006',
-      'uniqueCode': 'CODE: AI-AMB-006',
-      'selected': false,
-      'ticketData': null,
-    },
-  ];
+  final Set<int> _selectedSlNos = <int>{};
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _fallbackTickets = [];
+
+  String get _ticketId {
+    final raw = (widget.ticket['id'] ??
+            widget.ticket['ticketId'] ??
+            widget.ticket['ticket_id'] ??
+            '')
+        .toString()
+        .trim();
+    return raw.startsWith('#') ? raw.substring(1).trim() : raw;
+  }
 
   @override
   void initState() {
     super.initState();
-    // Generate fallback initial tickets
-    for (var ticket in tambolaTickets) {
-      ticket['ticketData'] = _generateTambolaTicket();
-    }
     _loadConfiguredTickets();
   }
 
-  void _loadConfiguredTickets() {
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final ticketId = widget.ticket['id'];
-      if (ticketId == null || ticketId.isEmpty) return;
-
-      try {
-        final provider = Provider.of<TicketProvider>(context, listen: false);
-        List<TambolaTicketModel> configured =
-            provider.getCachedTambolaTickets(ticketId) ?? [];
-
-        if (configured.isEmpty) {
-          configured = await provider.fetchTambolaTickets(ticketId);
-        }
-
-        if (configured.isNotEmpty && mounted) {
-          setState(() {
-            tambolaTickets.clear();
-            for (final t in configured) {
-              tambolaTickets.add(t.toSelectionMap());
-            }
-          });
-        }
-      } catch (e) {
-        debugPrint('ℹ️ [SELECTION] Using generated fallback: $e');
-      }
-    });
-  }
-
-  Map<String, dynamic> _generateTambolaTicket() {
-    Random random = Random();
-
-    List<List<int?>> ticket = List.generate(3, (_) => List.filled(9, null));
-
-    for (int row = 0; row < 3; row++) {
-      List<int> positions = List.generate(9, (index) => index);
-      positions.shuffle();
-      positions = positions.take(5).toList();
-      positions.sort();
-
-      for (int col = 0; col < 9; col++) {
-        if (positions.contains(col)) {
-          int minNum = col == 0 ? 1 : (col * 10);
-          int maxNum = col == 8 ? 90 : (col * 10) + 9;
-
-          int number = minNum + random.nextInt(maxNum - minNum + 1);
-
-          bool duplicate = true;
-          int attempts = 0;
-          while (duplicate && attempts < 10) {
-            duplicate = false;
-            for (int r = 0; r < row; r++) {
-              if (ticket[r][col] == number) {
-                duplicate = true;
-                number = minNum + random.nextInt(maxNum - minNum + 1);
-                break;
-              }
-            }
-            attempts++;
-          }
-
-          ticket[row][col] = number;
-        }
-      }
+  Future<void> _loadConfiguredTickets() async {
+    final tid = _ticketId;
+    if (tid.isEmpty) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
     }
 
-    return {'ticketData': ticket};
+    try {
+      final provider = Provider.of<TicketProvider>(context, listen: false);
+      // Check cache first
+      final cached = provider.getCachedTambolaTickets(tid);
+      if (cached != null && cached.isNotEmpty) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      // Fetch from Supabase
+      final fetched = await provider.fetchTambolaTickets(tid);
+      if (fetched.isEmpty && mounted) {
+        // If not found in DB either, initialize empty tickets for this draw
+        setState(() {
+          _fallbackTickets = List.generate(
+            6,
+            (index) => TambolaTicketModel.empty(tid, index + 1).toSelectionMap(),
+          );
+        });
+      }
+    } catch (e) {
+      debugPrint('ℹ️ [SELECTION] Error loading tickets: $e');
+      if (mounted) {
+        setState(() {
+          _fallbackTickets = List.generate(
+            6,
+            (index) => TambolaTicketModel.empty(tid, index + 1).toSelectionMap(),
+          );
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
-  int get selectedCount {
-    return tambolaTickets.where((item) => item['selected'] as bool).length;
-  }
+  int get selectedCount => _selectedSlNos.length;
 
   double get totalPrice {
-    double price = double.parse(
-        widget.ticket['price']!.replaceAll('₹', '').replaceAll('\$', ''));
+    final priceStr = (widget.ticket['price'] ?? '₹20')
+        .toString()
+        .replaceAll('₹', '')
+        .replaceAll('\$', '')
+        .trim();
+    final price = double.tryParse(priceStr) ?? 20.0;
     return price * selectedCount;
   }
 
   bool isTicketSelectable(int slNo) {
     // Get all selected tickets sorted by SL number
-    List<int> selectedSLs = tambolaTickets
-        .where((item) => item['selected'] as bool)
-        .map<int>((item) => item['slNo'] as int)
-        .toList()
-      ..sort();
+    List<int> selectedSLs = _selectedSlNos.toList()..sort();
 
     // If no tickets selected, all tickets are selectable
     if (selectedSLs.isEmpty) {
@@ -183,11 +115,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
 
     // If selected tickets are in set 1 (1-3)
     if (inSet1) {
-      // Only allow selecting from set 1 (1-3)
       if (slNo >= 1 && slNo <= 3) {
-        // Check if consecutive
         if (selectedSLs.contains(slNo)) return true; // Already selected
-        // Check if this is the next in sequence
         int nextInSequence = selectedSLs.last + 1;
         return slNo == nextInSequence;
       }
@@ -196,11 +125,8 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
 
     // If selected tickets are in set 2 (4-6)
     if (inSet2) {
-      // Only allow selecting from set 2 (4-6)
       if (slNo >= 4 && slNo <= 6) {
-        // Check if consecutive
         if (selectedSLs.contains(slNo)) return true; // Already selected
-        // Check if this is the next in sequence
         int nextInSequence = selectedSLs.last + 1;
         return slNo == nextInSequence;
       }
@@ -211,11 +137,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
   }
 
   String getSelectionMessage() {
-    List<int> selectedSLs = tambolaTickets
-        .where((item) => item['selected'] as bool)
-        .map<int>((item) => item['slNo'] as int)
-        .toList()
-      ..sort();
+    List<int> selectedSLs = _selectedSlNos.toList()..sort();
 
     if (selectedSLs.isEmpty) {
       return 'Select tickets (max 3) from (1-3) or (4-6)';
@@ -250,6 +172,39 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Listen reactively to TicketProvider
+    final provider = Provider.of<TicketProvider>(context);
+    final cached = _ticketId.isNotEmpty
+        ? provider.getCachedTambolaTickets(_ticketId)
+        : null;
+
+    final List<Map<String, dynamic>> tambolaTickets = [];
+    if (cached != null && cached.isNotEmpty) {
+      for (final t in cached) {
+        final map = t.toSelectionMap();
+        map['selected'] = _selectedSlNos.contains(t.slNo);
+        tambolaTickets.add(map);
+      }
+    } else if (_fallbackTickets.isNotEmpty) {
+      for (final t in _fallbackTickets) {
+        final map = Map<String, dynamic>.from(t);
+        map['selected'] = _selectedSlNos.contains(map['slNo']);
+        tambolaTickets.add(map);
+      }
+    }
+
+    final set1Tickets = tambolaTickets
+        .where((t) =>
+            (t['slNo'] as int? ?? 0) >= 1 && (t['slNo'] as int? ?? 0) <= 3)
+        .toList();
+    final set2Tickets = tambolaTickets
+        .where((t) =>
+            (t['slNo'] as int? ?? 0) >= 4 && (t['slNo'] as int? ?? 0) <= 6)
+        .toList();
+    final otherTickets = tambolaTickets
+        .where((t) => (t['slNo'] as int? ?? 0) > 6)
+        .toList();
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Container(
@@ -278,17 +233,17 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
               ),
               child: Row(
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.info_outline,
-                    color: const Color(0xFF00B894),
+                    color: Color(0xFF00B894),
                     size: 18,
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       getSelectionMessage(),
-                      style: TextStyle(
-                        color: const Color(0xFF2C3E50),
+                      style: const TextStyle(
+                        color: Color(0xFF2C3E50),
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
@@ -302,7 +257,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      '${selectedCount}/3',
+                      '$selectedCount/3',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -388,161 +343,220 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                             ),
                           ),
 
-                          // Set 1: Tickets 1-3
-                          Container(
-                            margin: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF00B894).withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: const Color(0xFF00B894).withOpacity(0.2),
-                                width: 1,
-                              ),
-                            ),
-                            child: Column(
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          const SizedBox(width: 8),
-                                          const Text(
-                                            'Tickets 1-3',
-                                            style: TextStyle(
-                                              color: Color(0xFF2C3E50),
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ],
+                          if (_isLoading && tambolaTickets.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 40),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const CircularProgressIndicator(
+                                      color: Color(0xFF00B894),
+                                      strokeWidth: 2.5,
+                                    ),
+                                    const SizedBox(height: 14),
+                                    Text(
+                                      'Loading tickets for $_ticketId...',
+                                      style: const TextStyle(
+                                        color: Color(0xFF64748B),
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
                                       ),
-                                      if (tambolaTickets
-                                          .where((t) =>
-                                              t['slNo'] as int >= 1 &&
-                                              t['slNo'] as int <= 3)
-                                          .every((t) => t['selected'] as bool))
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF00B894)
-                                                .withOpacity(0.15),
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                            border: Border.all(
-                                              color: const Color(0xFF00B894),
-                                              width: 1,
-                                            ),
-                                          ),
-                                          child: const Text(
-                                            '✓ COMPLETE',
-                                            style: TextStyle(
-                                              color: Color(0xFF00B894),
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else if (tambolaTickets.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 36),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.confirmation_number_outlined,
+                                      size: 44,
+                                      color: Colors.grey.shade400,
+                                    ),
+                                    const SizedBox(height: 10),
+                                    const Text(
+                                      'No Tambola tickets configured yet.',
+                                      style: TextStyle(
+                                        color: Color(0xFF64748B),
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else ...[
+                            // Set 1: Tickets 1-3
+                            if (set1Tickets.isNotEmpty)
+                              Container(
+                                margin: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color:
+                                      const Color(0xFF00B894).withOpacity(0.05),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: const Color(0xFF00B894)
+                                        .withOpacity(0.2),
+                                    width: 1,
                                   ),
                                 ),
-                                // Tickets in Set 1
-                                ...tambolaTickets
-                                    .where((t) =>
-                                        t['slNo'] as int >= 1 &&
-                                        t['slNo'] as int <= 3)
-                                    .map((ticket) => Padding(
+                                child: Column(
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          const Row(
+                                            children: [
+                                              SizedBox(width: 8),
+                                              Text(
+                                                'Tickets 1-3',
+                                                style: TextStyle(
+                                                  color: Color(0xFF2C3E50),
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          if (set1Tickets.isNotEmpty &&
+                                              set1Tickets.every((t) =>
+                                                  t['selected'] == true))
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFF00B894)
+                                                    .withOpacity(0.15),
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
+                                                  color:
+                                                      const Color(0xFF00B894),
+                                                  width: 1,
+                                                ),
+                                              ),
+                                              child: const Text(
+                                                '✓ COMPLETE',
+                                                style: TextStyle(
+                                                  color: Color(0xFF00B894),
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    // Tickets in Set 1
+                                    ...set1Tickets.map((ticket) => Padding(
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 4, vertical: 2),
                                           child:
                                               _buildTambolaTicketCard(ticket),
                                         )),
-                              ],
-                            ),
-                          ),
-
-                          // Set 2: Tickets 4-6
-                          Container(
-                            margin: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF00B894).withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: const Color(0xFF00B894).withOpacity(0.2),
-                                width: 1,
+                                  ],
+                                ),
                               ),
-                            ),
-                            child: Column(
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          const SizedBox(width: 8),
-                                          const Text(
-                                            'Tickets 4-6',
-                                            style: TextStyle(
-                                              color: Color(0xFF2C3E50),
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      if (tambolaTickets
-                                          .where((t) =>
-                                              t['slNo'] as int >= 4 &&
-                                              t['slNo'] as int <= 6)
-                                          .every((t) => t['selected'] as bool))
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFFFF6B6B)
-                                                .withOpacity(0.15),
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                            border: Border.all(
-                                              color: const Color(0xFFFF6B6B),
-                                              width: 1,
-                                            ),
-                                          ),
-                                          child: const Text(
-                                            '✓ COMPLETE',
-                                            style: TextStyle(
-                                              color: Color(0xFFFF6B6B),
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                    ],
+
+                            // Set 2: Tickets 4-6
+                            if (set2Tickets.isNotEmpty)
+                              Container(
+                                margin: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color:
+                                      const Color(0xFF00B894).withOpacity(0.05),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: const Color(0xFF00B894)
+                                        .withOpacity(0.2),
+                                    width: 1,
                                   ),
                                 ),
-                                // Tickets in Set 2
-                                ...tambolaTickets
-                                    .where((t) =>
-                                        t['slNo'] as int >= 4 &&
-                                        t['slNo'] as int <= 6)
-                                    .map((ticket) => Padding(
+                                child: Column(
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          const Row(
+                                            children: [
+                                              SizedBox(width: 8),
+                                              Text(
+                                                'Tickets 4-6',
+                                                style: TextStyle(
+                                                  color: Color(0xFF2C3E50),
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          if (set2Tickets.isNotEmpty &&
+                                              set2Tickets.every((t) =>
+                                                  t['selected'] == true))
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFFF6B6B)
+                                                    .withOpacity(0.15),
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
+                                                  color:
+                                                      const Color(0xFFFF6B6B),
+                                                  width: 1,
+                                                ),
+                                              ),
+                                              child: const Text(
+                                                '✓ COMPLETE',
+                                                style: TextStyle(
+                                                  color: Color(0xFFFF6B6B),
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    // Tickets in Set 2
+                                    ...set2Tickets.map((ticket) => Padding(
                                           padding: const EdgeInsets.symmetric(
                                               horizontal: 4, vertical: 2),
                                           child:
                                               _buildTambolaTicketCard(ticket),
                                         )),
-                              ],
-                            ),
-                          ),
+                                  ],
+                                ),
+                              ),
 
-                          const SizedBox(height: 8),
+                            // Any Other Tickets
+                            if (otherTickets.isNotEmpty)
+                              ...otherTickets.map((ticket) => Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 4),
+                                    child: _buildTambolaTicketCard(ticket),
+                                  )),
+
+                            const SizedBox(height: 8),
+                          ],
                         ],
                       ),
                     ),
@@ -561,6 +575,11 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
   }
 
   Widget _buildTicketInfoCard() {
+    final price = widget.ticket['price']?.toString() ?? '₹20';
+    final id = _ticketId.isNotEmpty ? _ticketId : 'N/A';
+    final date = widget.ticket['date']?.toString() ?? 'N/A';
+    final status = widget.ticket['status']?.toString() ?? 'Active';
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.9),
@@ -600,7 +619,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                   border: Border.all(color: const Color(0xFF00B894), width: 1),
                 ),
                 child: Text(
-                  widget.ticket['price']!,
+                  price,
                   style: const TextStyle(
                     color: Color(0xFF00B894),
                     fontWeight: FontWeight.bold,
@@ -611,11 +630,11 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
             ],
           ),
           const SizedBox(height: 16),
-          _buildInfoRow('Ticket ID', widget.ticket['id']!),
+          _buildInfoRow('Ticket ID', id),
           const SizedBox(height: 8),
-          _buildInfoRow('Date', widget.ticket['date']!),
+          _buildInfoRow('Date', date),
           const SizedBox(height: 8),
-          _buildInfoRow('Status', widget.ticket['status']!),
+          _buildInfoRow('Status', status),
         ],
       ),
     );
@@ -654,9 +673,33 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
   }
 
   Widget _buildTambolaTicketCard(Map<String, dynamic> ticket) {
-    final isSelected = ticket['selected'] as bool;
-    final slNo = ticket['slNo'] as int;
-    final ticketData = ticket['ticketData']['ticketData'] as List<List<int?>>;
+    final slNo = ticket['slNo'] is int
+        ? ticket['slNo'] as int
+        : int.tryParse(ticket['slNo']?.toString() ?? '1') ?? 1;
+    final isSelected = _selectedSlNos.contains(slNo);
+
+    List<List<int?>> ticketData =
+        List.generate(3, (_) => List<int?>.filled(9, null));
+    if (ticket['ticketData'] != null) {
+      if (ticket['ticketData'] is Map &&
+          ticket['ticketData']['ticketData'] is List) {
+        final list = ticket['ticketData']['ticketData'] as List;
+        ticketData = list
+            .map((r) => (r as List).map((c) => c as int?).toList())
+            .toList();
+      } else if (ticket['ticketData'] is List) {
+        final list = ticket['ticketData'] as List;
+        ticketData = list
+            .map((r) => (r as List).map((c) => c as int?).toList())
+            .toList();
+      }
+    }
+
+    final playerName = ticket['playerName']?.toString() ?? 'Ticket #$slNo';
+    final serialNumber = ticket['serialNumber']?.toString() ??
+        'SN: TKT-${slNo.toString().padLeft(3, '0')}';
+    final uniqueCode = ticket['uniqueCode']?.toString() ??
+        'CODE: TC-$_ticketId-${slNo.toString().padLeft(3, '0')}';
 
     // Check if this ticket can be selected
     bool canSelect = isTicketSelectable(slNo);
@@ -666,7 +709,11 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       onTap: () {
         if (canSelect || isSelected) {
           setState(() {
-            ticket['selected'] = !isSelected;
+            if (_selectedSlNos.contains(slNo)) {
+              _selectedSlNos.remove(slNo);
+            } else {
+              _selectedSlNos.add(slNo);
+            }
           });
         }
       },
@@ -773,7 +820,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                   // Player Name
                   Expanded(
                     child: Text(
-                      ticket['playerName'],
+                      playerName,
                       style: TextStyle(
                         color:
                             isDisabled ? Colors.grey : const Color(0xFF2C3E50),
@@ -795,7 +842,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                       ),
                     ),
                     child: Text(
-                      ticket['serialNumber'],
+                      serialNumber,
                       style: TextStyle(
                         color:
                             isDisabled ? Colors.grey : const Color(0xFF00B894),
@@ -817,7 +864,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  ticket['uniqueCode'],
+                  uniqueCode,
                   style: TextStyle(
                     color: isDisabled ? Colors.grey : const Color(0xFF00B894),
                     fontSize: 9,
@@ -963,7 +1010,10 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                           context,
                           MaterialPageRoute(
                             builder: (context) => TicketPurchasePage(
-                              ticket: widget.ticket,
+                              ticket: Map<String, String>.from(
+                                widget.ticket.map((k, v) =>
+                                    MapEntry(k.toString(), v.toString())),
+                              ),
                               showBackButton: true,
                             ),
                           ),
