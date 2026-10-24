@@ -1,8 +1,12 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/ticket_model.dart';
 import '../models/tambola_ticket_model.dart';
 import '../providers/ticket_provider.dart';
+import '../services/tambola_excel_service.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 
@@ -280,6 +284,1034 @@ class _AdminTambolaConfiguratorPageState
     );
   }
 
+  /// Pick an Excel (.xlsx, .xls) or CSV file and load Tambola tickets
+  Future<void> _handleUploadExcel() async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls', 'csv'],
+      );
+
+      if (files.isEmpty) {
+        return; // User cancelled
+      }
+
+      final file = files.first;
+      Uint8List bytes;
+      try {
+        bytes = await file.readAsBytes();
+      } catch (readErr) {
+        if (file.path != null) {
+          bytes = await File(file.path!).readAsBytes();
+        } else {
+          rethrow;
+        }
+      }
+
+      if (bytes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('⚠️ Selected file is empty. Please try another file.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      setState(() => _isLoading = true);
+
+      final importResult = TambolaExcelService.instance.parseBytes(
+        bytes,
+        file.name,
+        widget.ticket.ticketId,
+        existingTickets: _tickets,
+      );
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+
+      if (!mounted) return;
+
+      if (importResult.success && importResult.tickets.isNotEmpty) {
+        setState(() {
+          // Fill all imported tickets into _tickets
+          for (final imported in importResult.tickets) {
+            final idx = imported.slNo - 1;
+            if (idx >= 0 && idx < _tickets.length) {
+              _tickets[idx] = imported;
+            } else if (idx >= _tickets.length && _tickets.length < 12) {
+              _tickets.add(imported);
+            }
+          }
+          _activeSlIndex = 0; // Point to SL 1
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '✅ Successfully filled cells for ${importResult.tickets.length} tickets from ${file.name}!',
+            ),
+            backgroundColor: const Color(0xFF107C41),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+
+        // Open detailed review dialog
+        _showImportReviewDialog(importResult, file.name);
+      } else {
+        _showImportErrorDialog(importResult);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('⚠️ Error uploading Excel file: $e'),
+            backgroundColor: Colors.red.shade800,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Review bottom sheet shown immediately after Excel upload
+  void _showImportReviewDialog(TambolaImportResult result, String fileName) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        final completeCount = result.tickets.where((t) => t.isComplete).length;
+
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag Handle
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              // Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF107C41).withOpacity(0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check_circle_rounded,
+                        color: Color(0xFF107C41),
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Excel Upload Successful! 🎉',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1F2937),
+                            ),
+                          ),
+                          Text(
+                            fileName,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Divider(height: 1),
+
+              // Content
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Summary Stats Row
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF9FAFB),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  Text(
+                                    '${result.tickets.length}',
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF107C41),
+                                    ),
+                                  ),
+                                  const Text(
+                                    'Tickets Loaded',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(width: 1, height: 30, color: Colors.grey.shade300),
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  Text(
+                                    '${result.totalNumbersCount}',
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.primaryGreen,
+                                    ),
+                                  ),
+                                  const Text(
+                                    'Numbers Filled',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(width: 1, height: 30, color: Colors.grey.shade300),
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  Text(
+                                    '$completeCount/${result.tickets.length}',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: completeCount == result.tickets.length
+                                          ? const Color(0xFF107C41)
+                                          : Colors.orange.shade800,
+                                    ),
+                                  ),
+                                  const Text(
+                                    '15/15 Complete',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // Step-by-step guidance banner
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00B894).withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: const Color(0xFF00B894).withOpacity(0.2),
+                          ),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              size: 18,
+                              color: Color(0xFF00B894),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'All cells have been populated into the grid. You can switch between tickets (SL 1 to 6) to review, tap any cell to change numbers, and tap "Save Tambola Tickets" when satisfied.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade800,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      if (result.warnings.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.orange.shade200),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.warning_amber_rounded,
+                                      size: 16, color: Colors.orange.shade800),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Notes (${result.warnings.length}):',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.orange.shade900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              ...result.warnings.map(
+                                (w) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 3),
+                                  child: Text(
+                                    '• $w',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.orange.shade900,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Imported Tickets Breakdown:',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1F2937),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // List of tickets preview
+                      ...List.generate(result.tickets.length, (idx) {
+                        final t = result.tickets[idx];
+                        final isFull = t.isComplete;
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isFull
+                                  ? const Color(0xFF00B894).withOpacity(0.3)
+                                  : Colors.orange.withOpacity(0.3),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: isFull
+                                      ? const Color(0xFF00B894)
+                                      : Colors.orange,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${t.slNo}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'SL ${t.slNo} (${t.slNo <= 3 ? "Set 1" : "Set 2"})',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Text(
+                                      t.serialNumber,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: isFull
+                                      ? const Color(0xFFE8F5E9)
+                                      : Colors.orange.shade50,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  isFull
+                                      ? '✓ 15 Numbers'
+                                      : '${t.filledNumbersCount}/15 Numbers',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: isFull
+                                        ? const Color(0xFF2E7D32)
+                                        : Colors.orange.shade900,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Bottom Actions
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF1F2937),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        child: const Text(
+                          'Review & Edit Cells',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _handleSave();
+                        },
+                        icon: const Icon(Icons.cloud_upload_rounded, size: 16),
+                        label: const Text('Save to DB'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryGreen,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Dialog shown when Excel parsing fails or no tickets are recognized
+  void _showImportErrorDialog(TambolaImportResult result) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: const [
+              Icon(Icons.error_outline_rounded, color: Colors.red, size: 24),
+              SizedBox(width: 8),
+              Text('Import Failed', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                result.message,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              if (result.errors.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                ...result.errors.map(
+                  (e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text('• $e', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              const Text(
+                'Tip: You can download our sample Excel template to view the expected format.',
+                style: TextStyle(fontSize: 11.5, color: Color(0xFF107C41)),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showTemplateDialog();
+              },
+              child: const Text('View Template', style: TextStyle(color: Color(0xFF107C41), fontWeight: FontWeight.bold)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Template & formatting guide modal with one-tap Download Sample Excel
+  void _showTemplateDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag Handle
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              // Title Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF107C41).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.table_chart_rounded,
+                        color: Color(0xFF107C41),
+                        size: 22,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Excel Format & Template Guide',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1F2937),
+                            ),
+                          ),
+                          Text(
+                            'Standard Tambola Sheet Layout',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Divider(height: 1),
+
+              // Guide content
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '📋 How to Format Your Excel / CSV File:',
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1F2937),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _buildRuleItem('1', '3 Rows x 9 Columns per Ticket: Each ticket has exactly 3 rows and 9 columns.'),
+                      _buildRuleItem('2', '5 Numbers per Row: Exactly 5 filled numbers and 4 empty cells per row (15 numbers per ticket).'),
+                      _buildRuleItem('3', 'Column Decades:\n • Col 1: 1–9\n • Col 2: 10–19\n • Col 3: 20–29\n • Col 4: 30–39\n • Col 5: 40–49\n • Col 6: 50–59\n • Col 7: 60–69\n • Col 8: 70–79\n • Col 9: 80–90'),
+                      _buildRuleItem('4', 'Leave blank spaces empty (or empty cell) in Excel.'),
+                      _buildRuleItem('5', 'Separate tickets with a label row e.g. "SL 1", "SL 2" or blank lines. A standard sheet has SL 1 to SL 6.'),
+
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Visual Example Preview:',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1F2937),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Example table preview
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'SL 1 (Set 1)',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF107C41),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Table(
+                              border: TableBorder.all(color: Colors.grey.shade300),
+                              children: const [
+                                TableRow(children: [
+                                  Center(child: Text('4', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('25', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('41', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('62', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('85', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                ]),
+                                TableRow(children: [
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('12', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('33', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('55', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('74', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                ]),
+                                TableRow(children: [
+                                  Center(child: Text('7', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('29', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('48', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('', style: TextStyle(fontSize: 11))),
+                                  Center(child: Text('79', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                  Center(child: Text('90', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
+                                ]),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Action buttons
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          final savedPath = await TambolaExcelService.exportSampleExcel(
+                            ticketId: widget.ticket.ticketId,
+                          );
+                          if (!mounted) return;
+                          if (savedPath != null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('📥 Sample Excel template saved to:\n$savedPath'),
+                                backgroundColor: const Color(0xFF107C41),
+                                duration: const Duration(seconds: 4),
+                                action: SnackBarAction(
+                                  label: 'Dismiss',
+                                  textColor: Colors.white,
+                                  onPressed: () {},
+                                ),
+                              ),
+                            );
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('⚠️ Could not save sample Excel.'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.download_rounded, size: 16),
+                        label: const Text('Download Sample Excel (.xlsx)'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF107C41),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRuleItem(String num, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            margin: const EdgeInsets.only(top: 1),
+            decoration: BoxDecoration(
+              color: const Color(0xFF107C41).withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                num,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF107C41),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 11.5,
+                color: Colors.grey.shade700,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Cell Action Modal: Allows inspecting, replacing, or clearing a filled cell
+  void _showCellActionModal(int row, int col, int currentNumber) {
+    final colMin = getColMin(col);
+    final colMax = getColMax(col);
+    final usedInTicket = _usedNumbersInActiveTicket;
+
+    // Available unused numbers for this column
+    final availableInCol = <int>[];
+    for (int n = colMin; n <= colMax; n++) {
+      if (!usedInTicket.contains(n)) {
+        availableInCol.add(n);
+      }
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Edit Cell: Row ${row + 1}, Col ${col + 1}',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1F2937),
+                        ),
+                      ),
+                      Text(
+                        'Column Decade: $colMin to $colMax',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      gradient: AppColors.greenGradient,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primaryGreen.withOpacity(0.3),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        '$currentNumber',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Quick Replace with Unused Number in this Column:',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF374151),
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (availableInCol.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'No other unused numbers available in this column.',
+                    style: TextStyle(fontSize: 11.5, color: Colors.grey),
+                  ),
+                )
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: availableInCol.map((n) {
+                    return ActionChip(
+                      label: Text(
+                        '$n',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primaryGreen,
+                        ),
+                      ),
+                      backgroundColor: AppColors.primaryGreen.withOpacity(0.08),
+                      side: BorderSide(
+                        color: AppColors.primaryGreen.withOpacity(0.3),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _setCell(row, col, n);
+                      },
+                    );
+                  }).toList(),
+                ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _clearCell(row, col);
+                      },
+                      icon: const Icon(Icons.delete_outline_rounded,
+                          size: 16, color: Colors.red),
+                      label: const Text(
+                        'Clear Cell',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.red, width: 1),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        setState(() => _selectedColTab = col + 1);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryGreen,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: const Text(
+                        'Filter Tray to Col',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   /// Save all tickets to Supabase DB
   Future<void> _handleSave() async {
     // Validate maximum 15 numbers per ticket constraint
@@ -358,6 +1390,23 @@ class _AdminTambolaConfiguratorPageState
             showBackButton: true,
             showSearch: false,
             showBalance: false,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Upload from Excel',
+                  icon: const Icon(Icons.table_chart_rounded,
+                      color: Colors.white, size: 20),
+                  onPressed: _handleUploadExcel,
+                ),
+                IconButton(
+                  tooltip: 'Excel Template',
+                  icon: const Icon(Icons.download_rounded,
+                      color: Colors.white, size: 20),
+                  onPressed: _showTemplateDialog,
+                ),
+              ],
+            ),
             onBackPressed: () => Navigator.pop(context),
           ),
 
@@ -376,6 +1425,11 @@ class _AdminTambolaConfiguratorPageState
                   children: [
                     // Top Info Card
                     _buildTopInfoCard(),
+
+                    const SizedBox(height: 10),
+
+                    // Excel Upload Banner Card
+                    _buildExcelUploadCard(),
 
                     const SizedBox(height: 10),
 
@@ -484,6 +1538,128 @@ class _AdminTambolaConfiguratorPageState
                 fontSize: 12,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Banner card promoting Excel upload and template guidance
+  Widget _buildExcelUploadCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF107C41).withOpacity(0.08),
+            AppColors.primaryGreen.withOpacity(0.04),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFF107C41).withOpacity(0.28),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF107C41), // Microsoft Excel Green
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.table_chart_rounded,
+                  color: Colors.white,
+                  size: 16,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Bulk Import Tambola Tickets from Excel',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      'Upload spreadsheet (.xlsx, .xls, .csv) to auto-fill cells instantly',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: ElevatedButton.icon(
+                  onPressed: _handleUploadExcel,
+                  icon: const Icon(Icons.file_upload_outlined, size: 15),
+                  label: const Text('Upload Excel Sheet'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF107C41),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: OutlinedButton.icon(
+                  onPressed: _showTemplateDialog,
+                  icon: const Icon(Icons.description_outlined, size: 14),
+                  label: const Text('Template'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF107C41),
+                    side: const BorderSide(color: Color(0xFF107C41), width: 1),
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -779,9 +1955,20 @@ class _AdminTambolaConfiguratorPageState
                         return GestureDetector(
                           onTap: () {
                             if (!isFreeSlot) {
-                              _clearCell(rowIndex, colIndex);
+                              _showCellActionModal(rowIndex, colIndex, number);
                             } else {
                               setState(() => _selectedColTab = colIndex + 1);
+                            }
+                          },
+                          onLongPress: () {
+                            if (!isFreeSlot) {
+                              _clearCell(rowIndex, colIndex);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Cleared number $number from cell.'),
+                                  duration: const Duration(milliseconds: 700),
+                                ),
+                              );
                             }
                           },
                           child: AnimatedContainer(
@@ -890,11 +2077,34 @@ class _AdminTambolaConfiguratorPageState
 
   /// Quick Action Buttons (Auto-fill, Clear)
   Widget _buildQuickActionButtons() {
-    return Row(
-      children: [
-        // Auto-fill active ticket
-        Expanded(
-          child: OutlinedButton.icon(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: [
+          // Upload from Excel button
+          ElevatedButton.icon(
+            onPressed: _handleUploadExcel,
+            icon: const Icon(Icons.table_chart_rounded, size: 14),
+            label: const Text('Upload Excel'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF107C41),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          // Auto-fill active ticket
+          OutlinedButton.icon(
             onPressed: _autoFillActiveTicket,
             icon: const Icon(Icons.shuffle_rounded, size: 14),
             label: const Text('Auto-Fill SL'),
@@ -910,12 +2120,10 @@ class _AdminTambolaConfiguratorPageState
                   fontSize: 11, fontWeight: FontWeight.bold),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
+          const SizedBox(width: 8),
 
-        // Auto-fill all 6 tickets
-        Expanded(
-          child: OutlinedButton.icon(
+          // Auto-fill all 6 tickets
+          OutlinedButton.icon(
             onPressed: _autoFillAllTickets,
             icon: const Icon(Icons.auto_awesome_rounded, size: 14),
             label: const Text('Fill All 6 SL'),
@@ -930,26 +2138,26 @@ class _AdminTambolaConfiguratorPageState
                   fontSize: 11, fontWeight: FontWeight.bold),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
+          const SizedBox(width: 8),
 
-        // Clear ticket
-        OutlinedButton.icon(
-          onPressed: _clearActiveTicket,
-          icon: const Icon(Icons.delete_outline_rounded, size: 14),
-          label: const Text('Clear'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFD32F2F),
-            side: BorderSide(color: Colors.red.shade300),
-            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+          // Clear ticket
+          OutlinedButton.icon(
+            onPressed: _clearActiveTicket,
+            icon: const Icon(Icons.delete_outline_rounded, size: 14),
+            label: const Text('Clear'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFD32F2F),
+              side: BorderSide(color: Colors.red.shade300),
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              textStyle:
+                  const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
             ),
-            textStyle:
-                const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

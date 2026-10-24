@@ -1478,7 +1478,7 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'Draw Ticket $_autogenTicketId created! Opening Tambola Setup...'),
+                'Draw Ticket $_autogenTicketId created! Opening Tambola Setup (upload Excel or configure)...'),
             backgroundColor: const Color(0xFF196144),
             behavior: SnackBarBehavior.floating,
           ),
