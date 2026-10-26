@@ -113,7 +113,8 @@ CREATE POLICY "Allow update tickets"
     ON public.tickets 
     FOR UPDATE 
     TO anon, authenticated
-    USING (true);
+    USING (true)
+    WITH CHECK (true);
 
 -- Allow deleting tickets
 DROP POLICY IF EXISTS "Allow delete tickets" ON public.tickets;

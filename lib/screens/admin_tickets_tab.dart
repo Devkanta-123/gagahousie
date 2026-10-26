@@ -5,6 +5,7 @@ import '../providers/ticket_provider.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 import 'admin_tambola_configurator_page.dart';
+import 'admin_housie_game_page.dart';
 
 class AdminTicketsTab extends StatefulWidget {
   const AdminTicketsTab({super.key});
@@ -782,85 +783,103 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Setup/View Tambola Numbers button
-                  InkWell(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              AdminTambolaConfiguratorPage(ticket: ticket),
-                        ),
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF00B894).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: const Color(0xFF00B894).withOpacity(0.35),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          Icon(
-                            Icons.grid_on_rounded,
-                            size: 14,
-                            color: Color(0xFF00B894),
+                  // 1. Start Housie / Tambola Draw (Icon Only)
+                  Tooltip(
+                    message: 'Start Housie / Tambola Draw',
+                    child: InkWell(
+                      onTap: () => _showStartHousieBottomSheet(context, ticket),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 34,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFF7971E), Color(0xFFFFD200)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
-                          SizedBox(width: 4),
-                          Text(
-                            'Tambola Numbers',
-                            style: TextStyle(
-                              color: Color(0xFF00B894),
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.bold,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFF7971E).withOpacity(0.35),
+                              blurRadius: 5,
+                              offset: const Offset(0, 2),
                             ),
+                          ],
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.play_arrow_rounded,
+                            size: 20,
+                            color: Colors.white,
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 7),
 
-                  // Edit Ticket
-                  InkWell(
-                    onTap: () => _showTicketModal(context, ticketToEdit: ticket),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryGreen.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: AppColors.primaryGreen.withOpacity(0.3),
-                          width: 1,
+                  // 2. Setup/View Tambola Numbers button (Icon Only)
+                  Tooltip(
+                    message: 'Tambola Numbers Configurator',
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                AdminTambolaConfiguratorPage(ticket: ticket),
+                          ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 34,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00B894).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: const Color(0xFF00B894).withOpacity(0.4),
+                            width: 1,
+                          ),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.grid_on_rounded,
+                            size: 16,
+                            color: Color(0xFF00B894),
+                          ),
                         ),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          Icon(
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+
+                  // 3. Edit Ticket (Icon Only)
+                  Tooltip(
+                    message: 'Edit Ticket Details',
+                    child: InkWell(
+                      onTap: () => _showTicketModal(context, ticketToEdit: ticket),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 34,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryGreen.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppColors.primaryGreen.withOpacity(0.35),
+                            width: 1,
+                          ),
+                        ),
+                        child: const Center(
+                          child: Icon(
                             Icons.edit_note_rounded,
-                            size: 15,
+                            size: 18,
                             color: AppColors.primaryGreen,
                           ),
-                          SizedBox(width: 4),
-                          Text(
-                            'Edit Ticket',
-                            style: TextStyle(
-                              color: AppColors.primaryGreen,
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -1244,6 +1263,389 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
   void _showCreateTicketModal(BuildContext context) {
     _showTicketModal(context);
   }
+
+  /// Opens the Start Housie Options Sheet with 3 Game Modes
+  void _showStartHousieBottomSheet(BuildContext context, TicketModel ticket) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _StartHousieOptionsSheet(ticket: ticket),
+    );
+  }
+}
+
+/// Bottom Sheet with 3 Start Modes for Housie / Tambola
+class _StartHousieOptionsSheet extends StatelessWidget {
+  final TicketModel ticket;
+
+  const _StartHousieOptionsSheet({required this.ticket});
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 12, 20, 20 + bottomPadding),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 44,
+              height: 4.5,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Header
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFF7971E), Color(0xFFFFD200)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFF7971E).withOpacity(0.35),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.sports_esports_rounded,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Start Housie Draw',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2C3E50),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${ticket.ticketTitle} • ID: ${ticket.ticketId}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close_rounded, color: Colors.grey),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 10),
+
+          // Draw Details Card
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00B894).withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: const Color(0xFF00B894).withOpacity(0.25),
+                width: 0.8,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.calendar_today_rounded,
+                        size: 13, color: Color(0xFF00B894)),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${ticket.drawDate} at ${ticket.drawTime}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF00B894),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  'Prize Pool: ${ticket.totalPrize}',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF2C3E50),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          const Text(
+            'CHOOSE HOSTING MODE',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Option 1: System Auto with Pause Option
+          _buildOptionCard(
+            context,
+            title: '1. System Auto',
+            subtitle:
+                'Automated number caller at timed intervals (3s–10s) with full Pause, Resume, and Skip controls.',
+            icon: Icons.smart_toy_rounded,
+            badge: 'AUTO TIMED',
+            badgeColor: const Color(0xFF00B894),
+            gradientColors: const [Color(0xFF00B894), Color(0xFF00CEC9)],
+            tags: const ['⚡ Auto Interval', '⏸️ Play / Pause', '📢 Slang Voice'],
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AdminHousieGamePage(
+                    ticket: ticket,
+                    initialMode: HousieGameMode.systemAuto,
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+
+          // Option 2: Real Live with Video and Mic Features
+          _buildOptionCard(
+            context,
+            title: '2. Real Live (Video & Mic)',
+            subtitle:
+                'Host live with real-time camera and microphone streaming so players can see and hear the host while numbers are drawn.',
+            icon: Icons.videocam_rounded,
+            badge: 'LIVE STREAM',
+            badgeColor: const Color(0xFFE74C3C),
+            gradientColors: const [Color(0xFFE74C3C), Color(0xFFFF7675)],
+            tags: const [
+              '🎥 Camera Feed',
+              '🎙️ Live Mic',
+              '🔄 Flip Camera',
+              '🔴 Live HUD'
+            ],
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AdminHousieGamePage(
+                    ticket: ticket,
+                    initialMode: HousieGameMode.realLive,
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+
+          // Option 3: Manual with Mark the Number
+          _buildOptionCard(
+            context,
+            title: '3. Manual (Mark the Number)',
+            subtitle:
+                'Draw physical coins from your box or cage and tap numbers 1–90 on the master board to mark calls manually.',
+            icon: Icons.touch_app_rounded,
+            badge: 'MANUAL BOARD',
+            badgeColor: const Color(0xFF3498DB),
+            gradientColors: const [Color(0xFF2980B9), Color(0xFF3498DB)],
+            tags: const [
+              '✋ Touch 1-90 Grid',
+              '🎲 Physical Draw',
+              '↩️ Undo Support'
+            ],
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AdminHousieGamePage(
+                    ticket: ticket,
+                    initialMode: HousieGameMode.manual,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOptionCard(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required String badge,
+    required Color badgeColor,
+    required List<Color> gradientColors,
+    required List<String> tags,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: badgeColor.withOpacity(0.35), width: 1.2),
+          boxShadow: [
+            BoxShadow(
+              color: badgeColor.withOpacity(0.08),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Icon Badge
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: gradientColors,
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: gradientColors.first.withOpacity(0.35),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Icon(icon, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 12),
+
+            // Text Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF2C3E50),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: badgeColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: badgeColor.withOpacity(0.3), width: 0.8),
+                        ),
+                        child: Text(
+                          badge,
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                            color: badgeColor,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: Colors.grey.shade600,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Feature tags
+                  Wrap(
+                    spacing: 5,
+                    runSpacing: 4,
+                    children: tags.map((t) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          t,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right_rounded,
+                color: Colors.grey.shade400, size: 22),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Modal Bottom Sheet for Admin Ticket Creation & Editing
@@ -1251,7 +1653,7 @@ class _CreateTicketBottomSheet extends StatefulWidget {
   final TicketModel? ticketToEdit;
   final VoidCallback? onSaved;
 
-  const _CreateTicketBottomSheet({super.key, this.ticketToEdit, this.onSaved});
+  const _CreateTicketBottomSheet({this.ticketToEdit, this.onSaved});
 
   @override
   State<_CreateTicketBottomSheet> createState() =>
