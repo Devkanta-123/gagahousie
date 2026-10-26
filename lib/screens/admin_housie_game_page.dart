@@ -69,6 +69,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   List<TambolaTicketModel> _tambolaTickets = [];
   bool _isLoadingTickets = true;
 
+  // Claims & Awarded Winners State
+  final List<Map<String, dynamic>> _pendingClaims = [];
+  final Map<String, Map<String, dynamic>> _awardedPrizes = {};
+
   // Voice Announcement (TTS) State
   final FlutterTts _flutterTts = FlutterTts();
   bool _isVoiceEnabled = true;
@@ -199,14 +203,54 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
+    if (widget.ticket.awardedPrizes != null) {
+      for (final award in widget.ticket.awardedPrizes!) {
+        final pName =
+            award['prize_name']?.toString().toLowerCase().trim() ?? '';
+        if (pName.isNotEmpty) {
+          _awardedPrizes[pName] = Map<String, dynamic>.from(award);
+        }
+      }
+    }
+    _fetchExistingAwardedPrizes();
+
     _initBroadcastChannel();
     _loadTambolaTickets();
     _initTts();
-    _sendDrawStartedNotification();
+
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted) _sendDrawStartedNotification();
+    });
 
     if (_activeMode == HousieGameMode.realLive) {
       _initCamera();
       _startLiveTimer();
+    }
+  }
+
+  Future<void> _fetchExistingAwardedPrizes() async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client == null) return;
+      final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
+      final res = await client
+          .from('tickets')
+          .select('awarded_prizes')
+          .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
+          .maybeSingle();
+
+      if (res != null && res['awarded_prizes'] is List) {
+        for (final award in res['awarded_prizes']) {
+          final pName =
+              award['prize_name']?.toString().toLowerCase().trim() ?? '';
+          if (pName.isNotEmpty) {
+            _awardedPrizes[pName] = Map<String, dynamic>.from(award);
+          }
+        }
+        if (mounted) setState(() {});
+      }
+    } catch (e) {
+      debugPrint('⚠️ [FETCH AWARDED PRIZES NOTICE] $e');
     }
   }
 
@@ -215,49 +259,767 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     if (client == null) return;
     try {
       _broadcastChannel = client.channel('gaga_broadcast_feed');
+
+      // Listen for both event names for maximum compatibility
       _broadcastChannel?.onBroadcast(
         event: 'prize_claimed',
-        callback: (payload) {
-          debugPrint('🏆 [ADMIN] Prize claimed event received: $payload');
-          final tid = payload['ticket_id']?.toString() ?? '';
-          final cleanTid = tid.replaceAll('#', '').trim();
-          final currentTid = widget.ticket.ticketId.replaceAll('#', '').trim();
-          if (cleanTid.isNotEmpty && cleanTid != currentTid) return;
-
-          final pName = payload['prize_name'] ?? 'Prize';
-          final uName = payload['user_name'] ?? 'Player';
-          final sl = payload['sl_no']?.toString() ?? '';
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                backgroundColor: const Color(0xFF27AE60),
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(seconds: 4),
-                content: Row(
-                  children: [
-                    const Icon(Icons.emoji_events, color: Colors.amber),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '🎉 $uName (SL #$sl) claimed $pName!',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-          if (_isVoiceEnabled) {
-            _flutterTts.speak('Prize alert! $uName has claimed $pName!');
-          }
-        },
+        callback: (payload) => _onClaimReceived(payload),
       );
-      _broadcastChannel?.subscribe();
+      _broadcastChannel?.onBroadcast(
+        event: 'prize_claim_submitted',
+        callback: (payload) => _onClaimReceived(payload),
+      );
+
+      _broadcastChannel?.subscribe((status, error) {
+        debugPrint(
+            '📡 [ADMIN BROADCAST STATUS] $status ${error != null ? "Error: $error" : ""}');
+        if (status == RealtimeSubscribeStatus.subscribed) {
+          _sendDrawStartedNotification();
+        }
+      });
     } catch (e) {
       debugPrint('⚠️ [ADMIN BROADCAST CHANNEL ERROR] $e');
     }
+  }
+
+  void _onClaimReceived(Map<String, dynamic> payload) {
+    debugPrint('🏆 [ADMIN] Prize claim received: $payload');
+    final tid = payload['ticket_id']?.toString() ?? '';
+    final cleanTid = tid.replaceAll('#', '').trim();
+    final currentTid = widget.ticket.ticketId.replaceAll('#', '').trim();
+    if (cleanTid.isNotEmpty && cleanTid != currentTid) return;
+
+    final pName = payload['prize_name']?.toString() ?? 'Prize';
+    final uName = payload['user_name']?.toString() ?? 'Player';
+    final sl = payload['sl_no']?.toString() ?? '';
+    final isAlreadyWon = _awardedPrizes.containsKey(pName.toLowerCase().trim());
+
+    // Check duplicate
+    final claimId = payload['claim_id']?.toString() ??
+        '${payload['user_id']}_${pName}_${sl}';
+    final alreadyExists = _pendingClaims.any((c) =>
+        (c['claim_id'] != null && c['claim_id'] == claimId) ||
+        (c['user_id'] == payload['user_id'] &&
+            c['prize_name'] == pName &&
+            c['sl_no'] == payload['sl_no']));
+
+    if (!alreadyExists) {
+      setState(() {
+        _pendingClaims.add(Map<String, dynamic>.from(payload));
+      });
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor:
+              isAlreadyWon ? Colors.orange.shade800 : const Color(0xFF6366F1),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+          content: Row(
+            children: [
+              Icon(
+                isAlreadyWon ? Icons.warning_amber : Icons.notifications_active,
+                color: Colors.amber,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isAlreadyWon
+                      ? '⚠️ $uName claimed $pName (already won by ${_awardedPrizes[pName.toLowerCase().trim()]?['winner_name']})'
+                      : '🔔 New Claim! $uName (SL #$sl) for $pName',
+                  style:
+                      const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          action: SnackBarAction(
+            label: 'VERIFY',
+            textColor: Colors.white,
+            onPressed: () => _showClaimsVerificationSheet(filterPrize: pName),
+          ),
+        ),
+      );
+    }
+
+    if (_isVoiceEnabled) {
+      try {
+        if (isAlreadyWon) {
+          _flutterTts.speak(
+              'Notice: $uName claimed $pName, but this prize was already won!');
+        } else {
+          _flutterTts.speak(
+              'Prize claim received! $uName is claiming $pName on ticket SL $sl!');
+        }
+      } catch (e) {
+        debugPrint('🎙️ [TTS NOTICE] $e');
+      }
+    }
+  }
+
+  Map<String, dynamic> _verifyTicketForClaim(Map<String, dynamic> claim) {
+    List<List<int?>>? grid;
+    if (claim['ticket_data'] != null && claim['ticket_data'] is List) {
+      grid = (claim['ticket_data'] as List).map((row) {
+        if (row is List) {
+          return row
+              .map((c) => c == null ? null : int.tryParse(c.toString()))
+              .toList();
+        }
+        return List<int?>.filled(9, null);
+      }).toList();
+    }
+
+    if (grid == null || grid.isEmpty) {
+      final sl = int.tryParse(claim['sl_no']?.toString() ?? '');
+      if (sl != null) {
+        final match = _tambolaTickets.where((t) => t.slNo == sl);
+        if (match.isNotEmpty) {
+          grid = match.first.ticketData;
+        }
+      }
+    }
+
+    if (grid == null || grid.length < 3) {
+      return {
+        'isValid': false,
+        'missing': <int>[],
+        'required': <int>[],
+        'grid': List.generate(3, (_) => List<int?>.filled(9, null)),
+        'explanation': 'Ticket grid not found',
+      };
+    }
+
+    final pName = (claim['prize_name']?.toString() ?? '').toLowerCase();
+    final row0 = grid[0].whereType<int>().toList();
+    final row1 = grid[1].whereType<int>().toList();
+    final row2 = grid[2].whereType<int>().toList();
+    final all15 = [...row0, ...row1, ...row2];
+
+    bool isValid = false;
+    List<int> required = [];
+    List<int> missing = [];
+    String explanation = '';
+
+    if (pName.contains('housefull') || pName.contains('house full')) {
+      required = all15;
+      missing = all15.where((n) => !_calledNumbers.contains(n)).toList();
+      isValid = missing.isEmpty && all15.length >= 15;
+      explanation = isValid
+          ? 'All 15 numbers on the ticket have been called by caller!'
+          : 'Missing ${missing.length} number(s): ${missing.join(", ")}';
+    } else if (pName.contains('quick') || pName.contains('five')) {
+      final called = all15.where((n) => _calledNumbers.contains(n)).toList();
+      required = all15;
+      isValid = called.length >= 5;
+      missing = all15.where((n) => !_calledNumbers.contains(n)).toList();
+      explanation = isValid
+          ? '${called.length} numbers called (Quick 5 satisfied)!'
+          : 'Only ${called.length}/5 numbers called. Needs ${5 - called.length} more.';
+    } else if (pName.contains('1st') ||
+        pName.contains('first') ||
+        pName.contains('top')) {
+      required = row0;
+      missing = row0.where((n) => !_calledNumbers.contains(n)).toList();
+      isValid = missing.isEmpty && row0.isNotEmpty;
+      explanation = isValid
+          ? 'All 5 numbers in Row 1 (Top Line) called!'
+          : 'Row 1 missing: ${missing.join(", ")}';
+    } else if (pName.contains('2nd') ||
+        pName.contains('second') ||
+        pName.contains('middle')) {
+      required = row1;
+      missing = row1.where((n) => !_calledNumbers.contains(n)).toList();
+      isValid = missing.isEmpty && row1.isNotEmpty;
+      explanation = isValid
+          ? 'All 5 numbers in Row 2 (Middle Line) called!'
+          : 'Row 2 missing: ${missing.join(", ")}';
+    } else if (pName.contains('3rd') ||
+        pName.contains('third') ||
+        pName.contains('bottom')) {
+      required = row2;
+      missing = row2.where((n) => !_calledNumbers.contains(n)).toList();
+      isValid = missing.isEmpty && row2.isNotEmpty;
+      explanation = isValid
+          ? 'All 5 numbers in Row 3 (Bottom Line) called!'
+          : 'Row 3 missing: ${missing.join(", ")}';
+    } else if (pName.contains('corner') || pName.contains('4th')) {
+      if (row0.length >= 2 && row2.length >= 2) {
+        required = [row0.first, row0.last, row2.first, row2.last];
+        missing = required.where((n) => !_calledNumbers.contains(n)).toList();
+        isValid = missing.isEmpty;
+        explanation = isValid
+            ? 'All 4 corner numbers called!'
+            : 'Corners missing: ${missing.join(", ")}';
+      }
+    } else {
+      final called = all15.where((n) => _calledNumbers.contains(n)).toList();
+      isValid = called.length >= 5;
+      explanation = isValid
+          ? 'Pattern verified with ${called.length} called numbers'
+          : 'Pattern missing required numbers';
+    }
+
+    return {
+      'isValid': isValid,
+      'missing': missing,
+      'required': required,
+      'grid': grid,
+      'explanation': explanation,
+    };
+  }
+
+  Future<void> _approveWinner(Map<String, dynamic> claim) async {
+    final pName = claim['prize_name']?.toString() ?? 'Prize';
+    final uName = claim['user_name']?.toString() ?? 'Player';
+    final sl = claim['sl_no'] is int
+        ? claim['sl_no']
+        : int.tryParse(claim['sl_no']?.toString() ?? '1') ?? 1;
+    final sn = claim['serial_number']?.toString() ?? '';
+    final pAmount = claim['prize_amount']?.toString() ?? '';
+    final uId = claim['user_id'];
+
+    final awardRecord = {
+      'prize_name': pName,
+      'winner_name': uName,
+      'sl_no': sl,
+      'serial_number': sn,
+      'prize_amount': pAmount,
+      'user_id': uId,
+      'awarded_at': DateTime.now().toIso8601String(),
+    };
+
+    setState(() {
+      _awardedPrizes[pName.toLowerCase().trim()] = awardRecord;
+      _pendingClaims.removeWhere((c) =>
+          c['prize_name']?.toString().toLowerCase().trim() ==
+          pName.toLowerCase().trim());
+    });
+
+    // 1. Persist in DB immediately
+    _syncAwardedPrizesToDb();
+
+    // 2. Broadcast to all clients
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && _broadcastChannel != null) {
+        await _broadcastChannel!.sendBroadcastMessage(
+          event: 'prize_awarded',
+          payload: {
+            'ticket_id': widget.ticket.ticketId,
+            'prize_name': pName,
+            'winner_name': uName,
+            'sl_no': sl,
+            'serial_number': sn,
+            'prize_amount': pAmount,
+            'user_id': uId,
+            'awarded_prizes': _awardedPrizes.values.toList(),
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ [BROADCAST PRIZE AWARDED ERROR] $e');
+    }
+
+    // 3. Create in-app notification for the winner
+    if (uId != null) {
+      try {
+        await WalletService.instance.createNotification(
+          userId: uId,
+          title: '🏆 You Won $pName!',
+          message:
+              'Congratulations! The Host verified your claim. You have won $pName ($pAmount) on Draw #${widget.ticket.ticketId}!',
+          type: 'prize_won',
+          metadata: {
+            'ticket_id': widget.ticket.ticketId,
+            'prize_name': pName,
+            'prize_amount': pAmount,
+            'sl_no': sl,
+          },
+        );
+      } catch (_) {}
+    }
+
+    // 4. Voice Announcement (guarded safely so MissingPluginException never crashes approval)
+    if (_isVoiceEnabled) {
+      try {
+        await _flutterTts.stop();
+        await _flutterTts.speak(
+            'Attention players! Winner verified! $uName with ticket SL $sl has WON $pName! Congratulations $uName!');
+      } catch (e) {
+        debugPrint('🎙️ [TTS NOTICE] $e');
+      }
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF27AE60),
+          behavior: SnackBarBehavior.floating,
+          content: Text('🎉 $uName officially announced as winner for $pName!'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _rejectClaim(Map<String, dynamic> claim,
+      [String reason = 'Ticket does not meet pattern requirements']) async {
+    final claimId = claim['claim_id'];
+    setState(() {
+      _pendingClaims.removeWhere((c) =>
+          (claimId != null && c['claim_id'] == claimId) ||
+          (c['user_id'] == claim['user_id'] &&
+              c['prize_name'] == claim['prize_name'] &&
+              c['sl_no'] == claim['sl_no']));
+    });
+
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && _broadcastChannel != null) {
+        await _broadcastChannel!.sendBroadcastMessage(
+          event: 'claim_rejected',
+          payload: {
+            'ticket_id': widget.ticket.ticketId,
+            'prize_name': claim['prize_name'],
+            'user_id': claim['user_id'],
+            'user_name': claim['user_name'],
+            'sl_no': claim['sl_no'],
+            'reason': reason,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          content: Text('Claim from ${claim['user_name']} rejected as bogey.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _syncAwardedPrizesToDb() async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client == null) return;
+      final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
+      await client.from('tickets').update({
+        'awarded_prizes': _awardedPrizes.values.toList(),
+      }).eq('ticket_id', cleanId);
+    } catch (e) {
+      debugPrint('⚠️ [SYNC AWARDED PRIZES DB ERROR] $e');
+    }
+  }
+
+  void _showClaimsVerificationSheet({String? filterPrize}) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final claimsToShow = filterPrize == null
+                ? _pendingClaims
+                : _pendingClaims
+                    .where((c) =>
+                        c['prize_name']?.toString().toLowerCase().trim() ==
+                        filterPrize.toLowerCase().trim())
+                    .toList();
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.85,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                children: [
+                  // Sheet Header
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 14),
+                    decoration: BoxDecoration(
+                      border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.verified_user_rounded,
+                                color: Color(0xFF6366F1), size: 22),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Claim Verification (${claimsToShow.length} Pending)',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF1E293B),
+                              ),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Claims List
+                  Expanded(
+                    child: claimsToShow.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.done_all_rounded,
+                                      size: 54, color: Colors.grey.shade300),
+                                  const SizedBox(height: 12),
+                                  const Text(
+                                    'No Pending Claims',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF2C3E50),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'When players submit prize claims during the draw, they will appear here in real time for verification.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                        fontSize: 12.5,
+                                        color: Colors.grey.shade600),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: claimsToShow.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 14),
+                            itemBuilder: (context, idx) {
+                              final claim = claimsToShow[idx];
+                              final pName =
+                                  claim['prize_name']?.toString() ?? '';
+                              final uName =
+                                  claim['user_name']?.toString() ?? 'Player';
+                              final sl = claim['sl_no']?.toString() ?? '1';
+                              final sn =
+                                  claim['serial_number']?.toString() ?? '';
+                              final pAmount =
+                                  claim['prize_amount']?.toString() ?? '';
+
+                              final verifyRes = _verifyTicketForClaim(claim);
+                              final isValid =
+                                  verifyRes['isValid'] == true;
+                              final missing =
+                                  (verifyRes['missing'] as List<int>?) ?? [];
+                              final grid =
+                                  (verifyRes['grid'] as List<List<int?>>?) ??
+                                      [];
+
+                              final isPrizeAlreadyWon = _awardedPrizes
+                                  .containsKey(pName.toLowerCase().trim());
+
+                              return Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: isValid
+                                        ? const Color(0xFF00B894)
+                                        : Colors.red.shade300,
+                                    width: 1.5,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.04),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 3),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    // Row 1: Player & Prize
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 8, vertical: 3),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFF6366F1),
+                                                borderRadius:
+                                                    BorderRadius.circular(6),
+                                              ),
+                                              child: Text(
+                                                'SL #$sl',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 11,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              uName,
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF1E293B),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFF39C12)
+                                                .withOpacity(0.15),
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                          ),
+                                          child: Text(
+                                            '$pName • $pAmount',
+                                            style: const TextStyle(
+                                              color: Color(0xFFD68910),
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      sn,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+
+                                    // Ticket Grid Preview
+                                    if (grid.length >= 3) ...[
+                                      Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.shade50,
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          border: Border.all(
+                                              color: Colors.grey.shade200),
+                                        ),
+                                        child: Column(
+                                          children: List.generate(3, (rIdx) {
+                                            return Padding(
+                                              padding: const EdgeInsets.only(
+                                                  bottom: 3),
+                                              child: Row(
+                                                children: List.generate(9,
+                                                    (cIdx) {
+                                                  final val =
+                                                      grid[rIdx][cIdx];
+                                                  final isCalled = val !=
+                                                          null &&
+                                                      _calledNumbers
+                                                          .contains(val);
+                                                  return Expanded(
+                                                    child: Container(
+                                                      margin:
+                                                          const EdgeInsets.symmetric(
+                                                              horizontal: 1.5),
+                                                      height: 24,
+                                                      decoration:
+                                                          BoxDecoration(
+                                                        color: val == null
+                                                            ? Colors.transparent
+                                                            : (isCalled
+                                                                ? const Color(
+                                                                    0xFF00B894)
+                                                                : Colors.grey
+                                                                    .shade200),
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                                4),
+                                                      ),
+                                                      child: Center(
+                                                        child: Text(
+                                                          val == null
+                                                              ? ''
+                                                              : '$val',
+                                                          style: TextStyle(
+                                                            fontSize: 9,
+                                                            fontWeight:
+                                                                FontWeight.bold,
+                                                            color: isCalled
+                                                                ? Colors.white
+                                                                : Colors.black87,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  );
+                                                }),
+                                              ),
+                                            );
+                                          }),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 10),
+                                    ],
+
+                                    // Verification Status Banner
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: isValid
+                                            ? const Color(0xFFE8F8F5)
+                                            : Colors.red.shade50,
+                                        borderRadius:
+                                            BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: isValid
+                                              ? const Color(0xFF00B894)
+                                                  .withOpacity(0.3)
+                                              : Colors.red.shade200,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            isValid
+                                                ? Icons.check_circle_rounded
+                                                : Icons.cancel_rounded,
+                                            color: isValid
+                                                ? const Color(0xFF00B894)
+                                                : Colors.red,
+                                            size: 18,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              isValid
+                                                  ? '✅ 100% VALID CLAIM: All required numbers have been called by host!'
+                                                  : '⚠️ BOGEY CLAIM: Missing numbers: ${missing.join(", ")}',
+                                              style: TextStyle(
+                                                fontSize: 11.5,
+                                                fontWeight: FontWeight.bold,
+                                                color: isValid
+                                                    ? const Color(0xFF00896F)
+                                                    : Colors.red.shade800,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+
+                                    // Action Buttons
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: OutlinedButton(
+                                            style: OutlinedButton.styleFrom(
+                                              foregroundColor: Colors.red,
+                                              side: const BorderSide(
+                                                  color: Colors.red),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                              ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      vertical: 10),
+                                            ),
+                                            onPressed: () {
+                                              _rejectClaim(claim);
+                                              setSheetState(() {});
+                                            },
+                                            child: const Text('Reject Bogey'),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          flex: 2,
+                                          child: ElevatedButton.icon(
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: isPrizeAlreadyWon
+                                                  ? Colors.grey
+                                                  : const Color(0xFF00B894),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                              ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      vertical: 10),
+                                            ),
+                                            icon: const Icon(
+                                                Icons.emoji_events,
+                                                color: Colors.white,
+                                                size: 16),
+                                            label: Text(
+                                              isPrizeAlreadyWon
+                                                  ? 'Already Won'
+                                                  : 'Approve & Announce Winner',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                            onPressed: isPrizeAlreadyWon
+                                                ? null
+                                                : () {
+                                                    Navigator.pop(ctx);
+                                                    _approveWinner(claim);
+                                                  },
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _broadcastNumber(int number) async {
@@ -342,9 +1104,13 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     try {
       final ticketId = widget.ticket.ticketId;
       final ticketTitle = widget.ticket.ticketTitle;
+      final cleanId = ticketId.replaceAll('#', '').trim();
       debugPrint(
-          '📢 [DRAW START NOTIFICATION] Fetching registered buyers for draw $ticketId...');
+          '📢 [DRAW START NOTIFICATION] Preparing draw start alert for $ticketTitle (#$cleanId)...');
 
+      final client = SupabaseService.instance.client;
+
+      // 1. Fetch registered buyers
       final buyers = await TicketService.instance.fetchBuyersForDraw(ticketId);
       final Set<dynamic> buyerUserIds = buyers
           .where((b) => b.userId != null && b.userId != 0)
@@ -354,41 +1120,49 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       debugPrint(
           '📢 [DRAW START NOTIFICATION] Found ${buyerUserIds.length} buyers for draw $ticketId: $buyerUserIds');
 
-      final client = SupabaseService.instance.client;
-
-      // 1. Insert DB notification for each buyer in user_notifications table
+      // 2. Insert DB notifications safely (ignoring any constraint or foreign key errors)
       for (final uid in buyerUserIds) {
-        await WalletService.instance.createNotification(
-          userId: uid,
-          title: '🎯 Housie Draw Started!',
-          message:
-              'The draw for $ticketTitle (Draw #$ticketId) has officially started! Check your numbers now.',
-          type: 'draw_started',
-          metadata: {
-            'ticket_id': ticketId,
-            'ticket_title': ticketTitle,
-            'mode': _activeMode.name,
-          },
-        );
+        try {
+          await WalletService.instance.createNotification(
+            userId: uid,
+            title: '🎯 Housie Draw Started!',
+            message:
+                'The draw for $ticketTitle (Draw #$cleanId) has officially started! Check your numbers now.',
+            type: 'draw_started',
+            metadata: {
+              'ticket_id': cleanId,
+              'ticket_title': ticketTitle,
+              'mode': _activeMode.name,
+            },
+          );
+        } catch (_) {}
       }
 
-      // 2. Broadcast instant peer-to-peer WebSocket event across all connected clients
-      if (client != null) {
-        final broadcastChannel = client.channel('gaga_broadcast_feed');
-        await broadcastChannel.sendBroadcastMessage(
+      // 3. Broadcast instant peer-to-peer WebSocket event across gaga_broadcast_feed
+      final payload = {
+        'ticket_id': cleanId,
+        'ticket_title': ticketTitle,
+        'title': '🎯 Housie Draw Started!',
+        'message':
+            'The draw for $ticketTitle has officially started! Check your numbers now.',
+        'user_ids': buyerUserIds.map((id) => id.toString()).toList(),
+        'notification_id': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      if (_broadcastChannel != null) {
+        await _broadcastChannel!.sendBroadcastMessage(
           event: 'draw_started',
-          payload: {
-            'ticket_id': ticketId,
-            'ticket_title': ticketTitle,
-            'title': '🎯 Housie Draw Started!',
-            'message':
-                'The draw for $ticketTitle has officially started! Check your numbers now.',
-            'user_ids': buyerUserIds.map((id) => id.toString()).toList(),
-            'notification_id': DateTime.now().millisecondsSinceEpoch,
-          },
+          payload: payload,
         );
         debugPrint(
-            '✅ [DRAW START NOTIFICATION] Realtime broadcast sent for draw $ticketId');
+            '✅ [DRAW START NOTIFICATION] Realtime broadcast sent for draw #$cleanId');
+      } else if (client != null) {
+        final ch = client.channel('gaga_broadcast_feed');
+        await ch.subscribe();
+        await ch.sendBroadcastMessage(
+          event: 'draw_started',
+          payload: payload,
+        );
       }
     } catch (e) {
       debugPrint('⚠️ [DRAW START NOTIFICATION ERROR] $e');
@@ -398,7 +1172,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   @override
   void dispose() {
     _broadcastChannel?.unsubscribe();
-    _flutterTts.stop();
+    try {
+      _flutterTts.stop();
+    } catch (_) {}
     _autoTimer?.cancel();
     _countdownTimer?.cancel();
     _liveDurationTimer?.cancel();
@@ -732,6 +1508,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
     _broadcastNumber(next);
     _syncDrawStateToDb();
+    if (_calledNumbers.length == 1) {
+      _sendDrawStartedNotification();
+    }
 
     // Voice announcement for every new pick up
     _announceNumber(next);
@@ -763,6 +1542,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
       _broadcastNumber(number);
       _syncDrawStateToDb();
+      if (_calledNumbers.length == 1) {
+        _sendDrawStartedNotification();
+      }
 
       // Voice announcement for newly marked pick up
       _announceNumber(number);
@@ -807,9 +1589,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                     List<int>.generate(90, (i) => i + 1)..shuffle();
                 _currentNumber = null;
                 _countdown = _intervalSeconds;
+                _pendingClaims.clear();
+                _awardedPrizes.clear();
               });
               _broadcastReset();
               _syncDrawStateToDb();
+              _syncAwardedPrizesToDb();
             },
             child: const Text('Reset', style: TextStyle(color: Colors.white)),
           ),
@@ -933,6 +1718,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // Pending Player Claims Notification Banner
+                    if (_pendingClaims.isNotEmpty) ...[
+                      _buildPendingClaimsBanner(),
+                      const SizedBox(height: 12),
+                    ],
+
                     // Mode-Specific Hero Section
                     if (_activeMode == HousieGameMode.realLive)
                       _buildLiveCameraSection()
@@ -1217,7 +2008,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   _isVoiceEnabled = val;
                 });
                 if (!val) {
-                  _flutterTts.stop();
+                  try {
+                    _flutterTts.stop();
+                  } catch (_) {}
                 } else if (_currentNumber != null) {
                   _announceNumber(_currentNumber!);
                 }
@@ -2317,6 +3110,81 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     );
   }
 
+  Widget _buildPendingClaimsBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF6366F1).withOpacity(0.35),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          ScaleTransition(
+            scale: _pulseAnimation,
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.notifications_active_rounded,
+                  color: Color(0xFF4F46E5), size: 18),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${_pendingClaims.length} Claim${_pendingClaims.length > 1 ? "s" : ""} Pending Verification',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                Text(
+                  'Latest: ${_pendingClaims.last['user_name']} (${_pendingClaims.last['prize_name']})',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00B894),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            ),
+            onPressed: () => _showClaimsVerificationSheet(),
+            child: const Text(
+              'Verify Now',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ===========================================================================
   // PRIZES & WINNER VERIFICATION CARD
   // ===========================================================================
@@ -2386,75 +3254,170 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
           // Prize items list
           for (final prize in widget.ticket.prizes) ...[
-            Container(
-              margin: const EdgeInsets.only(bottom: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8F9FA),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        const Icon(Icons.star_rounded,
-                            color: Color(0xFFF1C40F), size: 16),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            prize.name,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF2C3E50),
+            Builder(builder: (context) {
+              final pKey = prize.name.toLowerCase().trim();
+              final isAwarded = _awardedPrizes.containsKey(pKey);
+              final awardInfo = _awardedPrizes[pKey];
+              final pendingForPrize = _pendingClaims
+                  .where((c) =>
+                      c['prize_name']?.toString().toLowerCase().trim() == pKey)
+                  .toList();
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isAwarded
+                      ? const Color(0xFFFFFBEB)
+                      : const Color(0xFFF8F9FA),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: isAwarded
+                        ? const Color(0xFFFDE68A)
+                        : Colors.grey.shade200,
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                isAwarded
+                                    ? Icons.emoji_events_rounded
+                                    : Icons.star_rounded,
+                                color: isAwarded
+                                    ? const Color(0xFFF59E0B)
+                                    : const Color(0xFFF1C40F),
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  prize.name,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: isAwarded
+                                        ? const Color(0xFF92400E)
+                                        : const Color(0xFF2C3E50),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (isAwarded && awardInfo != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              '🏆 Won by: ${awardInfo['winner_name']} (SL #${awardInfo['sl_no']})',
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFFD97706),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          prize.price,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isAwarded
+                                ? const Color(0xFF92400E)
+                                : const Color(0xFF27AE60),
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        if (isAwarded) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF59E0B).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Text(
+                              'CLOSED',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Color(0xFFD97706),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ] else if (pendingForPrize.isNotEmpty) ...[
+                          InkWell(
+                            onTap: () => _showClaimsVerificationSheet(
+                                filterPrize: prize.name),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6366F1),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.notifications_active,
+                                      color: Colors.white, size: 11),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    'Review (${pendingForPrize.length})',
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ] else ...[
+                          InkWell(
+                            onTap: () => _checkWinnersForPrize(prize.name),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color:
+                                    const Color(0xFF00B894).withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Text(
+                                'Check',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  color: Color(0xFF00B894),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        prize.price,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF27AE60),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      InkWell(
-                        onTap: () => _checkWinnersForPrize(prize.name),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF00B894).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Text(
-                            'Check',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              color: Color(0xFF00B894),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+                  ],
+                ),
+              );
+            }),
           ],
         ],
       ),

@@ -6,7 +6,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/ticket_model.dart';
 import '../models/ticket_purchase_model.dart';
 import '../providers/auth_provider.dart';
-import '../providers/ticket_provider.dart';
 import '../providers/wallet_provider.dart';
 import '../services/supabase_service.dart';
 import '../services/ticket_service.dart';
@@ -44,6 +43,11 @@ class _DrawPageState extends State<DrawPage>
 
   // Track claimed prizes in this session: Set<prizeName>
   final Set<String> _claimedPrizes = {};
+
+  // Awarded prizes & claims tracking
+  final Map<String, Map<String, dynamic>> _awardedPrizes = {};
+  final Set<String> _pendingUserClaims = {};
+  final Set<String> _spokenAlertKeys = {};
 
   // Real-time Subscriptions
   RealtimeChannel? _broadcastChannel;
@@ -170,7 +174,9 @@ class _DrawPageState extends State<DrawPage>
 
   @override
   void dispose() {
-    _flutterTts.stop();
+    try {
+      _flutterTts.stop();
+    } catch (_) {}
     _pulseController.dispose();
     _broadcastChannel?.unsubscribe();
     _ticketsTableChannel?.unsubscribe();
@@ -284,19 +290,20 @@ class _DrawPageState extends State<DrawPage>
     debugPrint(
         '🎟️ [DRAW PAGE] User owns ${_userPurchasedTickets.length} tickets for draw $cleanId');
 
-    // 2. Fetch latest called numbers directly from DB
+    // 2. Fetch latest called numbers and awarded prizes directly from DB
     try {
       final client = SupabaseService.instance.client;
       if (client != null) {
         final res = await client
             .from('tickets')
-            .select('called_numbers, current_number')
+            .select('called_numbers, current_number, awarded_prizes')
             .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
             .maybeSingle();
 
         if (res != null) {
           final called = res['called_numbers'];
           final curr = res['current_number'];
+          final awarded = res['awarded_prizes'];
           if (curr != null) {
             _currentNumber = int.tryParse(curr.toString());
           }
@@ -305,6 +312,19 @@ class _DrawPageState extends State<DrawPage>
             for (final item in called) {
               final n = int.tryParse(item.toString());
               if (n != null && n > 0) _calledNumbers.add(n);
+            }
+          }
+          if (awarded is List) {
+            _awardedPrizes.clear();
+            for (final item in awarded) {
+              if (item is Map) {
+                final k = (item['prize_name']?.toString() ?? '')
+                    .toLowerCase()
+                    .trim();
+                if (k.isNotEmpty) {
+                  _awardedPrizes[k] = Map<String, dynamic>.from(item);
+                }
+              }
             }
           }
         }
@@ -339,6 +359,9 @@ class _DrawPageState extends State<DrawPage>
       _lastAnnouncement = null;
       _userMarkedNumbers.clear();
       _claimedPrizes.clear();
+      _awardedPrizes.clear();
+      _pendingUserClaims.clear();
+      _spokenAlertKeys.clear();
       _isLoading = true;
     });
 
@@ -382,6 +405,15 @@ class _DrawPageState extends State<DrawPage>
               if (num != null) {
                 _currentNumber = num;
                 _calledNumbers.add(num);
+                // Also auto-mark this called number on user tickets
+                for (int i = 0; i < _userPurchasedTickets.length; i++) {
+                  _userMarkedNumbers.putIfAbsent(i, () => <int>{});
+                  for (final row in _userPurchasedTickets[i].ticketData) {
+                    if (row.contains(num)) {
+                      _userMarkedNumbers[i]!.add(num);
+                    }
+                  }
+                }
               }
               if (calledList is List) {
                 for (final item in calledList) {
@@ -397,6 +429,10 @@ class _DrawPageState extends State<DrawPage>
             if (num != null) {
               _speakAnnouncement(num, slang);
             }
+
+            // Check if any pattern is 1-away or ready to claim, and announce
+            final analysis = _analyzeUserTickets();
+            _checkAndSpeakPatternAlerts(analysis);
           }
         },
       );
@@ -452,6 +488,9 @@ class _DrawPageState extends State<DrawPage>
               _currentNumber = null;
               _lastAnnouncement = null;
               _claimedPrizes.clear();
+              _awardedPrizes.clear();
+              _pendingUserClaims.clear();
+              _spokenAlertKeys.clear();
               for (final set in _userMarkedNumbers.values) {
                 set.clear();
               }
@@ -463,6 +502,138 @@ class _DrawPageState extends State<DrawPage>
                 behavior: SnackBarBehavior.floating,
               ),
             );
+          }
+        },
+      );
+
+      // 4. Host approved a winner for a prize
+      _broadcastChannel?.onBroadcast(
+        event: 'prize_awarded',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid =
+              _drawTicket?.ticketId.replaceAll('#', '').trim() ?? '';
+
+          if (cleanTid.isNotEmpty &&
+              currentTid.isNotEmpty &&
+              cleanTid != currentTid) {
+            return;
+          }
+
+          final pName =
+              (payload['prize_name']?.toString() ?? '').toLowerCase().trim();
+          final uName = payload['winner_name']?.toString() ?? 'Player';
+          final sl = payload['sl_no']?.toString() ?? '';
+          final sn = payload['serial_number']?.toString() ?? '';
+          final pAmount = payload['prize_amount']?.toString() ?? '';
+          final uId = payload['user_id']?.toString();
+
+          final awardRecord = {
+            'prize_name': payload['prize_name'] ?? '',
+            'winner_name': uName,
+            'sl_no': sl,
+            'serial_number': sn,
+            'prize_amount': pAmount,
+            'user_id': uId,
+            'awarded_at': DateTime.now().toIso8601String(),
+          };
+
+          if (mounted) {
+            setState(() {
+              if (pName.isNotEmpty) {
+                _awardedPrizes[pName] = awardRecord;
+                _pendingUserClaims.remove(pName);
+              }
+              if (payload['awarded_prizes'] is List) {
+                for (final item in payload['awarded_prizes']) {
+                  if (item is Map) {
+                    final k = (item['prize_name']?.toString() ?? '')
+                        .toLowerCase()
+                        .trim();
+                    if (k.isNotEmpty) {
+                      _awardedPrizes[k] = Map<String, dynamic>.from(item);
+                    }
+                  }
+                }
+              }
+            });
+
+            final auth = Provider.of<AuthProvider>(context, listen: false);
+            final myUserId = auth.currentUser?.id;
+            final originalPrizeName =
+                payload['prize_name']?.toString() ?? 'Prize';
+
+            if (myUserId != null && uId != null && myUserId == uId) {
+              _showWinnerCelebrationDialog(
+                prizeName: originalPrizeName,
+                prizeAmount: pAmount,
+                slNo: sl,
+              );
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: const Color(0xFF27AE60),
+                  behavior: SnackBarBehavior.floating,
+                  content: Row(
+                    children: [
+                      const Icon(Icons.emoji_events,
+                          color: Colors.amber, size: 22),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '🏆 $uName won $originalPrizeName (SL #$sl)! Prize is now closed.',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                  duration: const Duration(seconds: 4),
+                ),
+              );
+            }
+          }
+        },
+      );
+
+      // 5. Host rejected a bogey claim
+      _broadcastChannel?.onBroadcast(
+        event: 'claim_rejected',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid =
+              _drawTicket?.ticketId.replaceAll('#', '').trim() ?? '';
+
+          if (cleanTid.isNotEmpty &&
+              currentTid.isNotEmpty &&
+              cleanTid != currentTid) {
+            return;
+          }
+
+          final auth = Provider.of<AuthProvider>(context, listen: false);
+          final myUserId = auth.currentUser?.id;
+          final claimantId = payload['user_id']?.toString();
+          final pName =
+              (payload['prize_name']?.toString() ?? '').toLowerCase().trim();
+
+          if (mounted) {
+            setState(() {
+              if (pName.isNotEmpty) {
+                _pendingUserClaims.remove(pName);
+              }
+            });
+
+            if (myUserId != null &&
+                claimantId != null &&
+                myUserId == claimantId) {
+              _showClaimRejectedDialog(
+                prizeName: payload['prize_name']?.toString() ?? 'Prize',
+                reason: payload['reason']?.toString() ??
+                    'Pattern requirements not satisfied',
+                slNo: payload['sl_no']?.toString() ?? '',
+              );
+            }
           }
         },
       );
@@ -485,6 +656,7 @@ class _DrawPageState extends State<DrawPage>
 
               final called = newRec['called_numbers'];
               final curr = newRec['current_number'];
+              final awarded = newRec['awarded_prizes'];
               if (mounted) {
                 setState(() {
                   if (curr != null) {
@@ -495,6 +667,19 @@ class _DrawPageState extends State<DrawPage>
                     for (final item in called) {
                       final n = int.tryParse(item.toString());
                       if (n != null && n > 0) _calledNumbers.add(n);
+                    }
+                  }
+                  if (awarded is List) {
+                    _awardedPrizes.clear();
+                    for (final item in awarded) {
+                      if (item is Map) {
+                        final k = (item['prize_name']?.toString() ?? '')
+                            .toLowerCase()
+                            .trim();
+                        if (k.isNotEmpty) {
+                          _awardedPrizes[k] = Map<String, dynamic>.from(item);
+                        }
+                      }
                     }
                   }
                 });
@@ -605,6 +790,37 @@ class _DrawPageState extends State<DrawPage>
               Text('The draw has not started yet. Wait for numbers to be called.'),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final pKey = prize.name.toLowerCase().trim();
+
+    // 1. Check if prize was already awarded and closed
+    if (_awardedPrizes.containsKey(pKey)) {
+      final winner = _awardedPrizes[pKey];
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '⚠️ ${prize.name} was already won by ${winner?['winner_name'] ?? "another player"} (SL #${winner?['sl_no'] ?? ""}). Prize is closed.',
+          ),
+          backgroundColor: Colors.orange.shade900,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // 2. Check if this user already submitted a pending claim
+    if (_pendingUserClaims.contains(pKey)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '⏳ Your claim for ${prize.name} is currently being verified by the host.',
+          ),
+          backgroundColor: const Color(0xFFE67E22),
+          behavior: SnackBarBehavior.floating,
         ),
       );
       return;
@@ -735,67 +951,79 @@ class _DrawPageState extends State<DrawPage>
         ? user!.fullName
         : (user?.phone ?? 'Player');
     final tid = _drawTicket?.ticketId ?? '';
+    final pKey = prize.name.toLowerCase().trim();
 
-    // Mark as claimed locally
+    // Mark as pending locally
     setState(() {
+      _pendingUserClaims.add(pKey);
       _claimedPrizes.add(prize.name);
     });
 
-    // 1. Broadcast instant event to Host Screen
+    // 1. Broadcast instant event to Host Screen with ticket_data
     try {
-      final client = SupabaseService.instance.client;
-      if (client != null) {
-        final ch = client.channel('gaga_broadcast_feed');
-        await ch.sendBroadcastMessage(
+      final payload = {
+        'ticket_id': tid,
+        'prize_name': prize.name,
+        'prize_amount': prize.price,
+        'user_id': user?.id,
+        'user_name': userName,
+        'sl_no': result.winningTicket?.slNo,
+        'serial_number': result.winningTicket?.serialNumber,
+        'unique_code': result.winningTicket?.uniqueCode,
+        'ticket_data': result.winningTicket?.ticketData,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      if (_broadcastChannel != null) {
+        await _broadcastChannel!.sendBroadcastMessage(
           event: 'prize_claimed',
-          payload: {
-            'ticket_id': tid,
-            'prize_name': prize.name,
-            'prize_amount': prize.price,
-            'user_id': user?.id,
-            'user_name': userName,
-            'sl_no': result.winningTicket?.slNo,
-            'serial_number': result.winningTicket?.serialNumber,
-            'unique_code': result.winningTicket?.uniqueCode,
-            'timestamp': DateTime.now().millisecondsSinceEpoch,
-          },
+          payload: payload,
         );
+      } else {
+        final client = SupabaseService.instance.client;
+        if (client != null) {
+          final ch = client.channel('gaga_broadcast_feed');
+          await ch.subscribe();
+          await ch.sendBroadcastMessage(
+            event: 'prize_claimed',
+            payload: payload,
+          );
+        }
       }
     } catch (e) {
       debugPrint('⚠️ [BROADCAST CLAIM ERROR] $e');
     }
 
-    // 2. Show celebratory winning dialog
-    _showWinDialog(result, prize, userName);
+    // 2. Show pending verification dialog to inform user
+    _showClaimSubmittedDialog(result, prize, userName);
   }
 
-  void _showWinDialog(
+  void _showClaimSubmittedDialog(
       ClaimValidationResult result, PrizeItem prize, String userName) {
     showDialog(
       context: context,
-      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         title: Column(
           children: [
             Container(
-              padding: const EdgeInsets.all(18),
-              decoration: const BoxDecoration(
-                color: Color(0xFFE8F8F5),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF39C12).withOpacity(0.12),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
-                Icons.emoji_events_rounded,
-                color: Color(0xFFF39C12),
-                size: 60,
+                Icons.hourglass_top_rounded,
+                color: Color(0xFFE67E22),
+                size: 52,
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             const Text(
-              '🎉 WINNER CLAIM!',
+              '⏳ Claim Submitted!',
               style: TextStyle(
-                color: Color(0xFF27AE60),
-                fontSize: 22,
+                color: Color(0xFF2C3E50),
+                fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -805,10 +1033,10 @@ class _DrawPageState extends State<DrawPage>
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Congratulations, $userName!\nYour claim for "${prize.name}" (${prize.price}) is 100% VALID!',
+              'Your claim for "${prize.name}" (${prize.price}) on SL #${result.winningTicket?.slNo} has been submitted to the Host for official verification.',
               textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 15,
+                fontSize: 14,
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF2C3E50),
               ),
@@ -817,30 +1045,175 @@ class _DrawPageState extends State<DrawPage>
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFF00B894).withOpacity(0.12),
+                color: const Color(0xFF00B894).withOpacity(0.08),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: const Color(0xFF00B894).withOpacity(0.35),
-                  width: 1.2,
+                  color: const Color(0xFF00B894).withOpacity(0.3),
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: const Row(
+                children: [
+                  Icon(Icons.verified_user_rounded,
+                      color: Color(0xFF00B894), size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The Host is checking your ticket live. Once approved, the winner will be officially announced!',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF00896F),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          Center(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00B894),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'Waiting for Verification ⏳',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showWinnerCelebrationDialog({
+    required String prizeName,
+    required String prizeAmount,
+    required String slNo,
+  }) {
+    if (_voiceEnabled) {
+      try {
+        _flutterTts.speak('Congratulations! You have WON $prizeName!');
+      } catch (_) {}
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        backgroundColor: Colors.white,
+        title: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFF39C12), Color(0xFFF1C40F)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFF39C12).withOpacity(0.4),
+                    blurRadius: 16,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.emoji_events_rounded,
+                color: Colors.white,
+                size: 64,
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              '🏆 YOU ARE THE WINNER!',
+              style: TextStyle(
+                color: Color(0xFF27AE60),
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'The Host verified your ticket and officially announced you as the WINNER of:',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFF00B894).withOpacity(0.12),
+                    const Color(0xFF00D2D3).withOpacity(0.12),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: const Color(0xFF00B894),
+                  width: 1.5,
+                ),
+              ),
+              child: Column(
                 children: [
                   Text(
-                    'Ticket SL #${result.winningTicket?.slNo}',
+                    prizeName,
                     style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
                       color: Color(0xFF2C3E50),
                     ),
                   ),
+                  const SizedBox(height: 4),
                   Text(
-                    result.winningTicket?.serialNumber ?? '',
+                    prizeAmount,
                     style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
                       color: Color(0xFF00B894),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00B894),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Winning Ticket SL #$slNo',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ],
@@ -848,7 +1221,109 @@ class _DrawPageState extends State<DrawPage>
             ),
             const SizedBox(height: 12),
             const Text(
-              'Your claim has been officially broadcast to the host admin screen.',
+              'Prize rewards are processed directly to your GaGa wallet balance!',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11.5, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          Center(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00B894),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 40, vertical: 12),
+              ),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'Collect & Celebrate! 🎉',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showClaimRejectedDialog({
+    required String prizeName,
+    required String reason,
+    required String slNo,
+  }) {
+    if (_voiceEnabled) {
+      try {
+        _flutterTts.speak('Your claim for $prizeName was rejected by host.');
+      } catch (_) {}
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        title: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.cancel_rounded,
+                color: Colors.red.shade700,
+                size: 54,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Claim Rejected (Bogey)',
+              style: TextStyle(
+                color: Colors.red.shade700,
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'The Host reviewed your claim for "$prizeName" on SL #$slNo and marked it as Bogey.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF2C3E50)),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.shade200),
+              ),
+              child: Text(
+                reason,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.red.shade900,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'You can continue playing as more numbers are drawn!',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
@@ -863,15 +1338,14 @@ class _DrawPageState extends State<DrawPage>
                   borderRadius: BorderRadius.circular(12),
                 ),
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 36, vertical: 12),
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
               ),
               onPressed: () => Navigator.pop(ctx),
               child: const Text(
-                'Claim Recorded 🎉',
+                'Continue Playing',
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
-                  fontSize: 15,
                 ),
               ),
             ),
@@ -879,6 +1353,265 @@ class _DrawPageState extends State<DrawPage>
         ],
       ),
     );
+  }
+
+  // ===========================================================================
+  // REAL-TIME PATTERN ANALYSIS & SMART AUTO-SUGGEST ALERTS
+  // ===========================================================================
+  PatternAnalysisResult _analyzeUserTickets() {
+    final List<ReadyToClaimAlert> readyList = [];
+    final List<NearWinAlert> nearWinList = [];
+    final Map<int, Set<int>> targetNumbersPerTicket = {};
+
+    final prizes = _drawTicket?.prizes ?? TicketModel.defaultPrizes();
+
+    for (int tIdx = 0; tIdx < _userPurchasedTickets.length; tIdx++) {
+      targetNumbersPerTicket[tIdx] = <int>{};
+      final ticket = _userPurchasedTickets[tIdx];
+      final grid = ticket.ticketData;
+      final row0 =
+          grid.isNotEmpty ? grid[0].whereType<int>().toList() : <int>[];
+      final row1 =
+          grid.length > 1 ? grid[1].whereType<int>().toList() : <int>[];
+      final row2 =
+          grid.length > 2 ? grid[2].whereType<int>().toList() : <int>[];
+      final all15 = [...row0, ...row1, ...row2];
+      final corners = (row0.length >= 2 && row2.length >= 2)
+          ? [row0.first, row0.last, row2.first, row2.last]
+          : <int>[];
+
+      for (final prize in prizes) {
+        final pName = prize.name.trim();
+        final pLower = pName.toLowerCase();
+
+        // If prize is already won and closed, do not alert
+        if (_awardedPrizes.containsKey(pLower)) continue;
+
+        // If user already submitted a pending claim for this prize, skip
+        if (_pendingUserClaims.contains(pLower)) continue;
+
+        if (pLower.contains('housefull') || pLower.contains('house full')) {
+          final missing =
+              all15.where((n) => !_calledNumbers.contains(n)).toList();
+          if (missing.isEmpty && all15.length >= 15) {
+            readyList.add(ReadyToClaimAlert(
+              prize: prize,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              ticket: ticket,
+              patternType: 'Housefull',
+              message:
+                  'All 15 numbers filled for Housefull on SL #${ticket.slNo}!',
+            ));
+          } else if (missing.length == 1) {
+            final targetNum = missing.first;
+            targetNumbersPerTicket[tIdx]!.add(targetNum);
+            nearWinList.add(NearWinAlert(
+              prizeName: prize.name,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              missingNumber: targetNum,
+              patternType: 'Housefull',
+              message:
+                  'Only number $targetNum needed for Housefull on SL #${ticket.slNo}!',
+            ));
+          }
+        } else if (pLower.contains('quick') || pLower.contains('five')) {
+          final calledOnTicket =
+              all15.where((n) => _calledNumbers.contains(n)).toList();
+          if (calledOnTicket.length >= 5) {
+            readyList.add(ReadyToClaimAlert(
+              prize: prize,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              ticket: ticket,
+              patternType: 'Quick 5',
+              message:
+                  '${calledOnTicket.length} numbers marked for Quick 5 on SL #${ticket.slNo}!',
+            ));
+          } else if (calledOnTicket.length == 4) {
+            final uncalled =
+                all15.where((n) => !_calledNumbers.contains(n)).toList();
+            if (uncalled.isNotEmpty) {
+              targetNumbersPerTicket[tIdx]!.addAll(uncalled);
+            }
+            nearWinList.add(NearWinAlert(
+              prizeName: prize.name,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              missingNumber: 0,
+              patternType: 'Quick 5',
+              message:
+                  'Just 1 more called number needed for Quick 5 on SL #${ticket.slNo}!',
+            ));
+          }
+        } else if (pLower.contains('1st') ||
+            pLower.contains('first') ||
+            pLower.contains('top')) {
+          final missing =
+              row0.where((n) => !_calledNumbers.contains(n)).toList();
+          if (missing.isEmpty && row0.isNotEmpty) {
+            readyList.add(ReadyToClaimAlert(
+              prize: prize,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              ticket: ticket,
+              patternType: '1st Line',
+              message:
+                  'Row 1 is filled! Ready to claim 1st Line on SL #${ticket.slNo}!',
+            ));
+          } else if (missing.length == 1) {
+            final targetNum = missing.first;
+            targetNumbersPerTicket[tIdx]!.add(targetNum);
+            nearWinList.add(NearWinAlert(
+              prizeName: prize.name,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              missingNumber: targetNum,
+              patternType: '1st Line',
+              message:
+                  'Only number $targetNum needed for 1st Line on SL #${ticket.slNo}!',
+            ));
+          }
+        } else if (pLower.contains('2nd') ||
+            pLower.contains('second') ||
+            pLower.contains('middle')) {
+          final missing =
+              row1.where((n) => !_calledNumbers.contains(n)).toList();
+          if (missing.isEmpty && row1.isNotEmpty) {
+            readyList.add(ReadyToClaimAlert(
+              prize: prize,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              ticket: ticket,
+              patternType: '2nd Line',
+              message:
+                  'Row 2 is filled! Ready to claim 2nd Line on SL #${ticket.slNo}!',
+            ));
+          } else if (missing.length == 1) {
+            final targetNum = missing.first;
+            targetNumbersPerTicket[tIdx]!.add(targetNum);
+            nearWinList.add(NearWinAlert(
+              prizeName: prize.name,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              missingNumber: targetNum,
+              patternType: '2nd Line',
+              message:
+                  'Only number $targetNum needed for 2nd Line on SL #${ticket.slNo}!',
+            ));
+          }
+        } else if (pLower.contains('3rd') ||
+            pLower.contains('third') ||
+            pLower.contains('bottom')) {
+          final missing =
+              row2.where((n) => !_calledNumbers.contains(n)).toList();
+          if (missing.isEmpty && row2.isNotEmpty) {
+            readyList.add(ReadyToClaimAlert(
+              prize: prize,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              ticket: ticket,
+              patternType: '3rd Line',
+              message:
+                  'Row 3 is filled! Ready to claim 3rd Line on SL #${ticket.slNo}!',
+            ));
+          } else if (missing.length == 1) {
+            final targetNum = missing.first;
+            targetNumbersPerTicket[tIdx]!.add(targetNum);
+            nearWinList.add(NearWinAlert(
+              prizeName: prize.name,
+              ticketIndex: tIdx,
+              slNo: ticket.slNo,
+              missingNumber: targetNum,
+              patternType: '3rd Line',
+              message:
+                  'Only number $targetNum needed for 3rd Line on SL #${ticket.slNo}!',
+            ));
+          }
+        } else if (pLower.contains('corner') || pLower.contains('4th')) {
+          final missing =
+              corners.where((n) => !_calledNumbers.contains(n)).toList();
+          if (corners.isNotEmpty) {
+            if (missing.isEmpty) {
+              readyList.add(ReadyToClaimAlert(
+                prize: prize,
+                ticketIndex: tIdx,
+                slNo: ticket.slNo,
+                ticket: ticket,
+                patternType: '4 Corners',
+                message:
+                    'All 4 corners filled! Ready to claim 4th Corner on SL #${ticket.slNo}!',
+              ));
+            } else if (missing.length == 1) {
+              final targetNum = missing.first;
+              targetNumbersPerTicket[tIdx]!.add(targetNum);
+              nearWinList.add(NearWinAlert(
+                prizeName: prize.name,
+                ticketIndex: tIdx,
+                slNo: ticket.slNo,
+                missingNumber: targetNum,
+                patternType: '4 Corners',
+                message:
+                    'Only number $targetNum needed for 4 Corners on SL #${ticket.slNo}!',
+              ));
+            }
+          }
+        }
+      }
+    }
+
+    return PatternAnalysisResult(
+      readyToClaim: readyList,
+      nearWins: nearWinList,
+      targetNumbersPerTicket: targetNumbersPerTicket,
+    );
+  }
+
+  void _checkAndSpeakPatternAlerts(PatternAnalysisResult analysis) {
+    if (!_voiceEnabled) return;
+
+    // Ready to claim has highest voice announcement priority
+    if (analysis.readyToClaim.isNotEmpty) {
+      final alert = analysis.readyToClaim.first;
+      final key = '${alert.slNo}_${alert.prize.name}_ready';
+      if (_spokenAlertKeys.add(key)) {
+        Future.delayed(const Duration(milliseconds: 1400), () {
+          if (mounted && _voiceEnabled) {
+            try {
+              _flutterTts.speak(
+                '${alert.patternType} completed on ticket SL ${alert.slNo}! Claim your prize now!',
+              );
+            } catch (_) {}
+          }
+        });
+        return;
+      }
+    }
+
+    // Near win announcement (1 away)
+    if (analysis.nearWins.isNotEmpty) {
+      final alert = analysis.nearWins.first;
+      final key =
+          '${alert.slNo}_${alert.prizeName}_1away_${alert.missingNumber}';
+      if (_spokenAlertKeys.add(key)) {
+        Future.delayed(const Duration(milliseconds: 1400), () {
+          if (mounted && _voiceEnabled) {
+            try {
+              if (alert.missingNumber > 0) {
+                _flutterTts.speak(
+                  'Alert! Only number ${alert.missingNumber} needed for ${alert.patternType} on ticket SL ${alert.slNo}!',
+                );
+              } else {
+                _flutterTts.speak(
+                  'Alert! Only one more number needed for ${alert.patternType} on ticket SL ${alert.slNo}!',
+                );
+              }
+            } catch (_) {}
+          }
+        });
+      }
+    }
   }
 
   void _showBogeyDialog(ClaimValidationResult result, PrizeItem prize) {
@@ -1144,6 +1877,9 @@ class _DrawPageState extends State<DrawPage>
   @override
   Widget build(BuildContext context) {
     final wallet = Provider.of<WalletProvider>(context);
+    final analysis = _analyzeUserTickets();
+    final readyList = analysis.readyToClaim;
+    final nearWinList = analysis.nearWins;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -1181,6 +1917,16 @@ class _DrawPageState extends State<DrawPage>
                       _buildDrawSwitcherCard(),
                       const SizedBox(height: 12),
 
+                      // Auto-Suggest Claim Banner (Pulsing high-priority when cells fill)
+                      if (readyList.isNotEmpty) ...[
+                        _buildAutoSuggestClaimBanner(readyList.first),
+                        const SizedBox(height: 12),
+                      ] else if (nearWinList.isNotEmpty) ...[
+                        // 1-Away Alert Banner (when only 1 number is needed)
+                        _buildNearWinAlertBanner(nearWinList.first),
+                        const SizedBox(height: 12),
+                      ],
+
                       // Status & Controls Ribbon
                       _buildStatusRibbon(),
                       const SizedBox(height: 14),
@@ -1194,11 +1940,11 @@ class _DrawPageState extends State<DrawPage>
                       const SizedBox(height: 20),
 
                       // User's Real Purchased Tickets
-                      _buildUserTicketsSection(),
+                      _buildUserTicketsSection(analysis),
                       const SizedBox(height: 24),
 
                       // Prizes & Claims Section
-                      _buildPrizePanel(),
+                      _buildPrizePanel(analysis),
                       const SizedBox(height: 30),
                     ],
                   ),
@@ -1211,8 +1957,248 @@ class _DrawPageState extends State<DrawPage>
   }
 
   // ===========================================================================
-  // SUB-WIDGETS
+  // SUB-WIDGETS & SMART ALERTS
   // ===========================================================================
+  Widget _buildAutoSuggestClaimBanner(ReadyToClaimAlert alert) {
+    return ScaleTransition(
+      scale: _pulseAnimation,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF00B894), Color(0xFF00A382)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF00B894).withOpacity(0.4),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.celebration_rounded,
+                color: Color(0xFF00B894),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.25),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          '⚡ READY TO CLAIM',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'SL #${alert.slNo}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${alert.prize.name} Completed!',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    'All required cells are filled. Tap CLAIM NOW before others!',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFF39C12),
+                foregroundColor: Colors.white,
+                elevation: 4,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: () => _handlePrizeClaim(alert.prize),
+              child: const Text(
+                'CLAIM NOW',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNearWinAlertBanner(NearWinAlert alert) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFFE67E22),
+            Color(0xFFD35400),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFD35400).withOpacity(0.3),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.local_fire_department_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        '🔥 1 CELL AWAY!',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'SL #${alert.slNo}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  alert.missingNumber > 0
+                      ? 'Waiting for number ${alert.missingNumber} for ${alert.prizeName}!'
+                      : 'Just 1 more called number needed for ${alert.prizeName}!',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (alert.missingNumber > 0)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 4,
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'NEED',
+                    style: TextStyle(
+                      color: Color(0xFFD35400),
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    '${alert.missingNumber}',
+                    style: const TextStyle(
+                      color: Color(0xFFD35400),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDrawSwitcherCard() {
     final ownedCount = _userPurchasedTickets.length;
 
@@ -1367,7 +2353,11 @@ class _DrawPageState extends State<DrawPage>
             tooltip: _voiceEnabled ? 'Mute Caller Voice' : 'Unmute Caller Voice',
             onPressed: () {
               setState(() => _voiceEnabled = !_voiceEnabled);
-              if (!_voiceEnabled) _flutterTts.stop();
+              if (!_voiceEnabled) {
+                try {
+                  _flutterTts.stop();
+                } catch (_) {}
+              }
             },
           ),
           // Auto Mark All
@@ -1628,7 +2618,7 @@ class _DrawPageState extends State<DrawPage>
     );
   }
 
-  Widget _buildUserTicketsSection() {
+  Widget _buildUserTicketsSection(PatternAnalysisResult analysis) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1663,7 +2653,7 @@ class _DrawPageState extends State<DrawPage>
             final tkt = entry.value;
             return Padding(
               padding: const EdgeInsets.only(bottom: 16),
-              child: _buildInteractiveTicketCard(idx, tkt),
+              child: _buildInteractiveTicketCard(idx, tkt, analysis),
             );
           }),
       ],
@@ -1766,11 +2756,19 @@ class _DrawPageState extends State<DrawPage>
   }
 
   Widget _buildInteractiveTicketCard(
-      int ticketIndex, TicketPurchaseModel ticket) {
+      int ticketIndex, TicketPurchaseModel ticket, PatternAnalysisResult analysis) {
     final marked = _userMarkedNumbers[ticketIndex] ?? <int>{};
     final allNumbers =
         ticket.ticketData.expand((r) => r).whereType<int>().toList();
     final markedCount = allNumbers.where((n) => marked.contains(n)).length;
+
+    final readyForThis = analysis.readyToClaim
+        .where((r) => r.ticketIndex == ticketIndex)
+        .toList();
+    final nearForThis =
+        analysis.nearWins.where((n) => n.ticketIndex == ticketIndex).toList();
+    final targetNumbers =
+        analysis.targetNumbersPerTicket[ticketIndex] ?? <int>{};
 
     return Container(
       decoration: BoxDecoration(
@@ -1872,9 +2870,94 @@ class _DrawPageState extends State<DrawPage>
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
-            // 3x9 Grid Matrix - Interactive Cell Tapping
+            // Smart In-Ticket Alert Ribbons
+            if (readyForThis.isNotEmpty) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00B894).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: const Color(0xFF00B894).withOpacity(0.4),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.stars_rounded,
+                        color: Color(0xFF00B894), size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '🎉 READY TO CLAIM: ${readyForThis.map((r) => r.prize.name).join(", ")}!',
+                        style: const TextStyle(
+                          color: Color(0xFF00896F),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => _handlePrizeClaim(readyForThis.first.prize),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00B894),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'CLAIM',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (nearForThis.isNotEmpty) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE67E22).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: const Color(0xFFE67E22).withOpacity(0.4),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_fire_department_rounded,
+                        color: Color(0xFFE67E22), size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '🔥 1 AWAY from ${nearForThis.first.prizeName}! ' +
+                            (nearForThis.first.missingNumber > 0
+                                ? 'Waiting for #${nearForThis.first.missingNumber}'
+                                : 'Needs 1 more called number'),
+                        style: const TextStyle(
+                          color: Color(0xFFD35400),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            // 3x9 Grid Matrix - Interactive Cell Tapping with Target Number Highlight
             ...List.generate(3, (rowIndex) {
               final rowList = rowIndex < ticket.ticketData.length
                   ? ticket.ticketData[rowIndex]
@@ -1890,6 +2973,8 @@ class _DrawPageState extends State<DrawPage>
                     final isCalled =
                         number != null && _calledNumbers.contains(number);
                     final isMarked = number != null && marked.contains(number);
+                    final isTarget =
+                        number != null && targetNumbers.contains(number);
 
                     return Expanded(
                       child: GestureDetector(
@@ -1904,7 +2989,9 @@ class _DrawPageState extends State<DrawPage>
                                     ? const Color(0xFF00B894)
                                     : (isCalled
                                         ? const Color(0xFFFFF3CD)
-                                        : Colors.white)),
+                                        : (isTarget
+                                            ? const Color(0xFFFEF9E7)
+                                            : Colors.white))),
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(
                               color: isFreeSlot
@@ -1915,9 +3002,12 @@ class _DrawPageState extends State<DrawPage>
                                           : const Color(0xFF00896F))
                                       : (isCalled
                                           ? const Color(0xFFF39C12)
-                                          : const Color(0xFF00B894)
-                                              .withOpacity(0.25))),
-                              width: isMarked || isCalled ? 1.8 : 1,
+                                          : (isTarget
+                                              ? const Color(0xFFF39C12)
+                                              : const Color(0xFF00B894)
+                                                  .withOpacity(0.25)))),
+                              width:
+                                  isMarked || isCalled || isTarget ? 1.8 : 1,
                             ),
                             boxShadow: isMarked
                                 ? [
@@ -1928,13 +3018,23 @@ class _DrawPageState extends State<DrawPage>
                                       offset: const Offset(0, 2),
                                     ),
                                   ]
-                                : null,
+                                : (isTarget
+                                    ? [
+                                        BoxShadow(
+                                          color: const Color(0xFFF39C12)
+                                              .withOpacity(0.3),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ]
+                                    : null),
                           ),
                           child: Center(
                             child: isFreeSlot
                                 ? const SizedBox.shrink()
                                 : Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.center,
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Text(
@@ -1944,7 +3044,10 @@ class _DrawPageState extends State<DrawPage>
                                               ? Colors.white
                                               : (isCalled
                                                   ? const Color(0xFFB7791F)
-                                                  : const Color(0xFF2C3E50)),
+                                                  : (isTarget
+                                                      ? const Color(0xFFD35400)
+                                                      : const Color(
+                                                          0xFF2C3E50))),
                                           fontWeight: FontWeight.bold,
                                           fontSize: 13,
                                         ),
@@ -1953,6 +3056,11 @@ class _DrawPageState extends State<DrawPage>
                                         const SizedBox(width: 1),
                                         const Icon(Icons.check,
                                             size: 10, color: Colors.white),
+                                      ] else if (isTarget && !isCalled) ...[
+                                        const SizedBox(width: 1),
+                                        const Icon(Icons.gps_fixed,
+                                            size: 9,
+                                            color: Color(0xFFE67E22)),
                                       ],
                                     ],
                                   ),
@@ -1989,8 +3097,11 @@ class _DrawPageState extends State<DrawPage>
     );
   }
 
-  Widget _buildPrizePanel() {
+  Widget _buildPrizePanel(PatternAnalysisResult analysis) {
     final prizes = _drawTicket?.prizes ?? TicketModel.defaultPrizes();
+    final readyPrizes = analysis.readyToClaim
+        .map((r) => r.prize.name.toLowerCase().trim())
+        .toSet();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2025,7 +3136,7 @@ class _DrawPageState extends State<DrawPage>
         ),
         const SizedBox(height: 6),
         Text(
-          'Tap CLAIM on any prize when your ticket matches the required pattern.',
+          'Prizes close immediately once won by a player. Multiple players can claim simultaneously before verification.',
           style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
         ),
         const SizedBox(height: 12),
@@ -2037,22 +3148,34 @@ class _DrawPageState extends State<DrawPage>
             crossAxisCount: 2,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            childAspectRatio: 2.1,
+            childAspectRatio: 1.85,
           ),
           itemBuilder: (context, index) {
             final prize = prizes[index];
-            final isClaimed = _claimedPrizes.contains(prize.name);
+            final pKey = prize.name.toLowerCase().trim();
+            final isAwarded = _awardedPrizes.containsKey(pKey);
+            final awardInfo = _awardedPrizes[pKey];
+            final isPending = _pendingUserClaims.contains(pKey);
+            final isReady = readyPrizes.contains(pKey);
 
             return Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: isAwarded
+                    ? Colors.grey.shade100
+                    : (isPending
+                        ? const Color(0xFFFEF5E7)
+                        : (isReady ? const Color(0xFFE8F8F5) : Colors.white)),
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: isClaimed
-                      ? const Color(0xFF27AE60)
-                      : Colors.grey.withOpacity(0.18),
-                  width: isClaimed ? 1.5 : 1,
+                  color: isAwarded
+                      ? Colors.grey.shade300
+                      : (isPending
+                          ? const Color(0xFFE67E22)
+                          : (isReady
+                              ? const Color(0xFF00B894)
+                              : Colors.grey.withOpacity(0.18))),
+                  width: isPending || isReady ? 1.6 : 1,
                 ),
                 boxShadow: [
                   BoxShadow(
@@ -2067,16 +3190,28 @@ class _DrawPageState extends State<DrawPage>
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.emoji_events,
-                          color: Color(0xFFF39C12), size: 18),
+                      Icon(
+                        isAwarded
+                            ? Icons.check_circle_rounded
+                            : Icons.emoji_events,
+                        color: isAwarded
+                            ? Colors.grey.shade500
+                            : const Color(0xFFF39C12),
+                        size: 18,
+                      ),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
                           prize.name,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF2C3E50),
+                            color: isAwarded
+                                ? Colors.grey.shade600
+                                : const Color(0xFF2C3E50),
+                            decoration: isAwarded
+                                ? TextDecoration.lineThrough
+                                : null,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -2084,39 +3219,158 @@ class _DrawPageState extends State<DrawPage>
                       ),
                       Text(
                         prize.price,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF27AE60),
+                          color: isAwarded
+                              ? Colors.grey.shade500
+                              : const Color(0xFF27AE60),
                         ),
                       ),
                     ],
                   ),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 28,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isClaimed
-                            ? const Color(0xFF27AE60)
-                            : const Color(0xFF00B894),
-                        elevation: 0,
-                        padding: EdgeInsets.zero,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                  if (isAwarded) ...[
+                    Row(
+                      children: [
+                        const Icon(Icons.person,
+                            size: 12, color: Colors.grey),
+                        const SizedBox(width: 3),
+                        Expanded(
+                          child: Text(
+                            'Won: ${awardInfo?['winner_name'] ?? 'Player'} (SL #${awardInfo?['sl_no'] ?? ''})',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey.shade700,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                      onPressed: () => _handlePrizeClaim(prize),
-                      child: Text(
-                        isClaimed ? 'CLAIMED ✓' : 'CLAIM',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                      ],
+                    ),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 28,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.grey.shade300,
+                          disabledBackgroundColor: Colors.grey.shade300,
+                          elevation: 0,
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: null,
+                        child: Text(
+                          'CLOSED 🔒',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey.shade600,
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                  ] else if (isPending) ...[
+                    const Text(
+                      '⏳ Verifying with Host Admin...',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFFD35400),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 28,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFE67E22),
+                          elevation: 0,
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: null,
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'VERIFYING...',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ] else if (isReady) ...[
+                    ScaleTransition(
+                      scale: _pulseAnimation,
+                      child: SizedBox(
+                        width: double.infinity,
+                        height: 28,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF39C12),
+                            elevation: 2,
+                            padding: EdgeInsets.zero,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          onPressed: () => _handlePrizeClaim(prize),
+                          child: const Text(
+                            '⚡ READY! CLAIM NOW',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: 28,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00B894),
+                          elevation: 0,
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: () => _handlePrizeClaim(prize),
+                        child: const Text(
+                          'CLAIM',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             );
@@ -2142,5 +3396,53 @@ class ClaimValidationResult {
     required this.requiredNumbers,
     required this.missingNumbers,
     required this.explanation,
+  });
+}
+
+class NearWinAlert {
+  final String prizeName;
+  final int ticketIndex;
+  final int slNo;
+  final int missingNumber;
+  final String patternType;
+  final String message;
+
+  NearWinAlert({
+    required this.prizeName,
+    required this.ticketIndex,
+    required this.slNo,
+    required this.missingNumber,
+    required this.patternType,
+    required this.message,
+  });
+}
+
+class ReadyToClaimAlert {
+  final PrizeItem prize;
+  final int ticketIndex;
+  final int slNo;
+  final TicketPurchaseModel ticket;
+  final String patternType;
+  final String message;
+
+  ReadyToClaimAlert({
+    required this.prize,
+    required this.ticketIndex,
+    required this.slNo,
+    required this.ticket,
+    required this.patternType,
+    required this.message,
+  });
+}
+
+class PatternAnalysisResult {
+  final List<ReadyToClaimAlert> readyToClaim;
+  final List<NearWinAlert> nearWins;
+  final Map<int, Set<int>> targetNumbersPerTicket;
+
+  PatternAnalysisResult({
+    required this.readyToClaim,
+    required this.nearWins,
+    required this.targetNumbersPerTicket,
   });
 }

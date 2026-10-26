@@ -80,16 +80,19 @@ CREATE TABLE IF NOT EXISTS public.tickets (
     prizes JSONB NOT NULL DEFAULT '[]'::jsonb,           -- JSON array of prize tiers
     called_numbers JSONB DEFAULT '[]'::jsonb,            -- Real-time list of called numbers
     current_number INT,                                  -- Last called number
+    awarded_prizes JSONB DEFAULT '[]'::jsonb,            -- Verified winners for each prize tier
     status TEXT NOT NULL DEFAULT 'Active',                -- Active / Completed / Cancelled
     created_by TEXT,                                     -- Admin email
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Ensure called_numbers and current_number columns exist if table was created previously
+-- Ensure called_numbers, current_number and awarded_prizes columns exist if table was created previously
 ALTER TABLE public.tickets 
     ADD COLUMN IF NOT EXISTS called_numbers JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.tickets 
     ADD COLUMN IF NOT EXISTS current_number INT;
+ALTER TABLE public.tickets 
+    ADD COLUMN IF NOT EXISTS awarded_prizes JSONB DEFAULT '[]'::jsonb;
 
 -- Enable Row Level Security (RLS)
 ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;

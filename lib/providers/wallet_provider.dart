@@ -171,35 +171,25 @@ class WalletProvider extends ChangeNotifier {
             return;
           }
 
-          final targetUserIds = (payload['user_ids'] as List?)
-                  ?.map((e) => e.toString())
-                  .toList() ??
-              [];
-          final bool isTargeted = targetUserIds.isEmpty ||
-              (_activeUserId != null &&
-                  targetUserIds.contains(_activeUserId.toString()));
-
-          if (isTargeted && _activeUserId != null) {
-            final notification = UserNotificationModel(
-              id: payload['notification_id'] ??
-                  DateTime.now().millisecondsSinceEpoch,
-              userId: _activeUserId,
-              title: payload['title'] ?? '🎯 Housie Draw Started!',
-              message: payload['message'] ??
-                  'The draw has begun! Check your numbers now.',
-              type: 'draw_started',
-              isRead: false,
-              metadata: {
-                if (payload['ticket_id'] != null)
-                  'ticket_id': payload['ticket_id'],
-                if (payload['ticket_title'] != null)
-                  'ticket_title': payload['ticket_title'],
-              },
-              createdAt: DateTime.now(),
-            );
-            _handleIncomingNotification(notification);
-            fetchNotifications();
-          }
+          final notification = UserNotificationModel(
+            id: payload['notification_id'] ??
+                DateTime.now().millisecondsSinceEpoch,
+            userId: _activeUserId ?? 0,
+            title: payload['title'] ?? '🎯 Housie Draw Started!',
+            message: payload['message'] ??
+                'The draw has begun! Check your numbers now.',
+            type: 'draw_started',
+            isRead: false,
+            metadata: {
+              if (payload['ticket_id'] != null)
+                'ticket_id': payload['ticket_id'],
+              if (payload['ticket_title'] != null)
+                'ticket_title': payload['ticket_title'],
+            },
+            createdAt: DateTime.now(),
+          );
+          _handleIncomingNotification(notification);
+          fetchNotifications();
         },
       );
 

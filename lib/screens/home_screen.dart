@@ -65,8 +65,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final isApproved = notification.isRechargeApproved;
     final isRejected = notification.isRechargeRejected;
     final isDrawStarted = notification.type == 'draw_started' ||
-        notification.title.contains('Draw Started') ||
-        notification.title.contains('Housie Draw Started');
+        notification.type == 'live_draw' ||
+        notification.title.toLowerCase().contains('draw started') ||
+        notification.title.toLowerCase().contains('housie draw') ||
+        notification.message.toLowerCase().contains('draw has begun') ||
+        notification.message.toLowerCase().contains('draw has officially started');
 
     showDialog(
       context: context,

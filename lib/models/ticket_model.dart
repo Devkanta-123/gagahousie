@@ -1,23 +1,45 @@
 class PrizeItem {
   String name;
   String price;
+  String? winnerName;
+  int? winnerSlNo;
 
-  PrizeItem({required this.name, required this.price});
+  PrizeItem({
+    required this.name,
+    required this.price,
+    this.winnerName,
+    this.winnerSlNo,
+  });
+
+  bool get isWon => winnerName != null && winnerName!.trim().isNotEmpty;
 
   Map<String, dynamic> toJson() => {
         'name': name,
         'price': price,
+        if (winnerName != null) 'winner_name': winnerName,
+        if (winnerSlNo != null) 'winner_sl_no': winnerSlNo,
       };
 
   factory PrizeItem.fromJson(Map<String, dynamic> json) => PrizeItem(
         name: json['name'] ?? '',
         price: json['price'] ?? '',
+        winnerName: json['winner_name'],
+        winnerSlNo: json['winner_sl_no'] != null
+            ? int.tryParse(json['winner_sl_no'].toString())
+            : null,
       );
 
-  PrizeItem copyWith({String? name, String? price}) {
+  PrizeItem copyWith({
+    String? name,
+    String? price,
+    String? winnerName,
+    int? winnerSlNo,
+  }) {
     return PrizeItem(
       name: name ?? this.name,
       price: price ?? this.price,
+      winnerName: winnerName ?? this.winnerName,
+      winnerSlNo: winnerSlNo ?? this.winnerSlNo,
     );
   }
 }
@@ -36,6 +58,7 @@ class TicketModel {
   final DateTime? createdAt;
   final List<int>? calledNumbers;
   final int? currentNumber;
+  final List<Map<String, dynamic>>? awardedPrizes;
 
   TicketModel({
     this.id,
@@ -51,6 +74,7 @@ class TicketModel {
     this.createdAt,
     this.calledNumbers,
     this.currentNumber,
+    this.awardedPrizes,
   });
 
   TicketModel copyWith({
@@ -67,6 +91,7 @@ class TicketModel {
     DateTime? createdAt,
     List<int>? calledNumbers,
     int? currentNumber,
+    List<Map<String, dynamic>>? awardedPrizes,
   }) {
     return TicketModel(
       id: id ?? this.id,
@@ -82,6 +107,7 @@ class TicketModel {
       createdAt: createdAt ?? this.createdAt,
       calledNumbers: calledNumbers ?? this.calledNumbers,
       currentNumber: currentNumber ?? this.currentNumber,
+      awardedPrizes: awardedPrizes ?? this.awardedPrizes,
     );
   }
 
@@ -131,6 +157,7 @@ class TicketModel {
       if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
       if (calledNumbers != null) 'called_numbers': calledNumbers,
       if (currentNumber != null) 'current_number': currentNumber,
+      if (awardedPrizes != null) 'awarded_prizes': awardedPrizes,
     };
   }
 
@@ -145,6 +172,24 @@ class TicketModel {
     }
     if (parsedPrizes.isEmpty) {
       parsedPrizes = defaultPrizes();
+    }
+
+    List<Map<String, dynamic>>? parsedAwardedPrizes;
+    if (json['awarded_prizes'] != null && json['awarded_prizes'] is List) {
+      parsedAwardedPrizes = (json['awarded_prizes'] as List)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      for (final award in parsedAwardedPrizes) {
+        final aName = award['prize_name']?.toString().toLowerCase().trim() ?? '';
+        for (final prize in parsedPrizes) {
+          if (prize.name.toLowerCase().trim() == aName) {
+            prize.winnerName = award['winner_name']?.toString();
+            prize.winnerSlNo = award['sl_no'] != null
+                ? int.tryParse(award['sl_no'].toString())
+                : null;
+          }
+        }
+      }
     }
 
     List<int>? parsedCalledNumbers;
@@ -174,6 +219,7 @@ class TicketModel {
       currentNumber: json['current_number'] != null
           ? int.tryParse(json['current_number'].toString())
           : null,
+      awardedPrizes: parsedAwardedPrizes,
     );
   }
 
