@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/ticket_model.dart';
 import '../models/tambola_ticket_model.dart';
+import '../services/supabase_service.dart';
 import '../services/ticket_service.dart';
 
 class TicketProvider extends ChangeNotifier {
@@ -8,6 +11,8 @@ class TicketProvider extends ChangeNotifier {
   Set<String> _ticketIdsWithTambola = {};
   bool _isLoading = false;
   String? _errorMessage;
+  final List<RealtimeChannel> _activeChannels = [];
+  Timer? _fallbackTimer;
 
   List<TicketModel> get tickets => _tickets;
   bool get isLoading => _isLoading;
@@ -70,8 +75,114 @@ class TicketProvider extends ChangeNotifier {
 
   String get nextTicketId => TicketService.instance.generateNextId(_tickets);
 
+  /// Sets up instant real-time subscription for tickets and tambola tickets
+  void initRealtimeSubscription() {
+    final client = SupabaseService.instance.client;
+    if (client == null || _activeChannels.isNotEmpty) return;
+
+    try {
+      // 1. ISOLATED CDC: tickets
+      _subscribeTable(
+        table: 'tickets',
+        onPayload: (payload) {
+          debugPrint('🔔 [REALTIME TICKETS CDC] ${payload.eventType} => new:${payload.newRecord} old:${payload.oldRecord}');
+          if (payload.eventType == PostgresChangeEvent.delete) {
+            final oldTicketId = payload.oldRecord['ticket_id']?.toString();
+            if (oldTicketId != null) {
+              _tickets.removeWhere((t) => t.ticketId == oldTicketId);
+              _tambolaTicketsCache.remove(oldTicketId);
+              _ticketIdsWithTambola.remove(oldTicketId);
+              notifyListeners();
+            } else {
+              _tickets.clear();
+              _tambolaTicketsCache.clear();
+              _ticketIdsWithTambola.clear();
+              notifyListeners();
+            }
+          }
+          fetchTickets();
+        },
+      );
+
+      // 2. ISOLATED CDC: tambola_tickets
+      _subscribeTable(
+        table: 'tambola_tickets',
+        onPayload: (payload) {
+          debugPrint('🔔 [REALTIME TAMBOLA CDC] ${payload.eventType}');
+          if (payload.eventType == PostgresChangeEvent.delete) {
+            final oldDrawId = payload.oldRecord['ticket_id']?.toString();
+            if (oldDrawId != null) {
+              _tambolaTicketsCache.remove(oldDrawId);
+              _ticketIdsWithTambola.remove(oldDrawId);
+              notifyListeners();
+            } else {
+              _tambolaTicketsCache.clear();
+              _ticketIdsWithTambola.clear();
+              notifyListeners();
+            }
+          }
+          fetchTickets();
+        },
+      );
+    } catch (e) {
+      debugPrint('ℹ️ [TICKETS REALTIME NOTICE] $e');
+    }
+  }
+
+  void _subscribeTable({
+    required String table,
+    required void Function(PostgresChangePayload payload) onPayload,
+  }) {
+    final client = SupabaseService.instance.client;
+    if (client == null) return;
+
+    try {
+      final channel = client.channel('gaga_tickets_$table');
+      channel.onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: table,
+        callback: onPayload,
+      );
+
+      channel.subscribe((status, error) {
+        if (status == RealtimeSubscribeStatus.channelError) {
+          debugPrint('ℹ️ [REALTIME NOTICE] "$table" is not in supabase_realtime publication yet. Polling fallback active.');
+          _startFallbackPolling();
+        } else if (status == RealtimeSubscribeStatus.subscribed) {
+          debugPrint('✅ [REALTIME TICKETS CDC SUBSCRIBED] $table');
+        }
+      });
+
+      _activeChannels.add(channel);
+    } catch (e) {
+      debugPrint('ℹ️ [TICKET CDC SUBSCRIBE NOTICE] $table: $e');
+    }
+  }
+
+  void _startFallbackPolling() {
+    if (_fallbackTimer != null && _fallbackTimer!.isActive) return;
+    _fallbackTimer = Timer.periodic(const Duration(seconds: 12), (_) {
+      fetchTickets();
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final ch in _activeChannels) {
+      try {
+        ch.unsubscribe();
+      } catch (_) {}
+    }
+    _activeChannels.clear();
+    _fallbackTimer?.cancel();
+    _fallbackTimer = null;
+    super.dispose();
+  }
+
   /// Fetch tickets from Supabase DB
   Future<void> fetchTickets() async {
+    initRealtimeSubscription();
     _isLoading = true;
     notifyListeners();
 

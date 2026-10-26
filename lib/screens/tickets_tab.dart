@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/ticket_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../utils/constants.dart';
 import 'ticket_selection_page.dart';
 import '../widgets/gaga_app_header.dart';
@@ -80,14 +81,16 @@ class TicketsTab extends StatelessWidget {
       displayTickets = tickets;
     }
 
+    final wallet = Provider.of<WalletProvider>(context);
+
     return Column(
       children: [
-        // Reusable Branded Header with integrated balance card
-        const GaGaAppHeader(
+        // Reusable Branded Header with real-time balance
+        GaGaAppHeader(
           compact: true,
           subtitle: 'Available Draws & Tickets',
           showBalance: true,
-          balance: 1000.0,
+          balance: wallet.balance,
           showRechargeButton: true,
         ),
 

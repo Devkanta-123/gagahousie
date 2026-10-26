@@ -34,6 +34,8 @@ class TicketModel {
   final String status;
   final String? createdBy;
   final DateTime? createdAt;
+  final List<int>? calledNumbers;
+  final int? currentNumber;
 
   TicketModel({
     this.id,
@@ -47,6 +49,8 @@ class TicketModel {
     this.status = 'Active',
     this.createdBy,
     this.createdAt,
+    this.calledNumbers,
+    this.currentNumber,
   });
 
   TicketModel copyWith({
@@ -61,6 +65,8 @@ class TicketModel {
     String? status,
     String? createdBy,
     DateTime? createdAt,
+    List<int>? calledNumbers,
+    int? currentNumber,
   }) {
     return TicketModel(
       id: id ?? this.id,
@@ -74,6 +80,8 @@ class TicketModel {
       status: status ?? this.status,
       createdBy: createdBy ?? this.createdBy,
       createdAt: createdAt ?? this.createdAt,
+      calledNumbers: calledNumbers ?? this.calledNumbers,
+      currentNumber: currentNumber ?? this.currentNumber,
     );
   }
 
@@ -121,6 +129,8 @@ class TicketModel {
       'status': status,
       if (createdBy != null) 'created_by': createdBy,
       if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
+      if (calledNumbers != null) 'called_numbers': calledNumbers,
+      if (currentNumber != null) 'current_number': currentNumber,
     };
   }
 
@@ -137,6 +147,14 @@ class TicketModel {
       parsedPrizes = defaultPrizes();
     }
 
+    List<int>? parsedCalledNumbers;
+    if (json['called_numbers'] != null && json['called_numbers'] is List) {
+      parsedCalledNumbers = (json['called_numbers'] as List)
+          .map((e) => int.tryParse(e.toString()) ?? 0)
+          .where((n) => n > 0)
+          .toList();
+    }
+
     return TicketModel(
       id: json['id'],
       ticketId:
@@ -151,6 +169,10 @@ class TicketModel {
       createdBy: json['created_by'],
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'].toString())
+          : null,
+      calledNumbers: parsedCalledNumbers,
+      currentNumber: json['current_number'] != null
+          ? int.tryParse(json['current_number'].toString())
           : null,
     );
   }

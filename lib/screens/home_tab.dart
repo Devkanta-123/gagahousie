@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/ticket_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../utils/constants.dart';
 import 'draw_page.dart';
 import 'my_tickets.dart';
-import '../widgets/balance_card.dart'; // Import the balance card widget
 import '../widgets/gaga_app_header.dart';
 import 'ticket_selection_page.dart';
 
@@ -147,12 +147,16 @@ class _HomeTabState extends State<HomeTab> {
   Widget build(BuildContext context) {
     final activeUpcoming = _getActiveUpcomingTickets();
 
+    final wallet = Provider.of<WalletProvider>(context);
+
     return RefreshIndicator(
       color: AppColors.primaryGreen,
       onRefresh: () async {
         try {
-          await Provider.of<TicketProvider>(context, listen: false)
-              .fetchTickets();
+          await Future.wait([
+            Provider.of<TicketProvider>(context, listen: false).fetchTickets(),
+            Provider.of<WalletProvider>(context, listen: false).refreshAll(),
+          ]);
         } catch (_) {}
       },
       child: SingleChildScrollView(
@@ -161,11 +165,12 @@ class _HomeTabState extends State<HomeTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Integrated GaGa Housie Header with Balance + Wallet + Recharge
-            const GaGaAppHeader(
+            // Integrated GaGa Housie Header with Real DB Balance + Wallet + Recharge
+            GaGaAppHeader(
               compact: true,
               showBalance: true,
-              balance: 1000.00,
+              balance: wallet.balance,
+              notificationCount: wallet.unreadNotificationsCount,
               showRechargeButton: true,
             ),
 

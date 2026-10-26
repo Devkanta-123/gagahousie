@@ -1,5 +1,12 @@
 // screens/ticket_purchase_page.dart
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/ticket_model.dart';
+import '../providers/auth_provider.dart';
+import '../providers/ticket_provider.dart';
+import '../providers/wallet_provider.dart';
+import '../services/ticket_service.dart';
+import '../services/wallet_service.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 import 'my_tickets.dart';
@@ -8,11 +15,21 @@ import 'wallet_page.dart';
 class TicketPurchasePage extends StatefulWidget {
   final Map<String, String>? ticket;
   final bool showBackButton;
+  final int selectedCount;
+  final List<int>? selectedSlNos;
+  final double? unitPrice;
+  final double? totalAmount;
+  final List<Map<String, dynamic>>? selectedTambolaTickets;
 
   const TicketPurchasePage({
     super.key,
     this.ticket,
     this.showBackButton = true,
+    this.selectedCount = 1,
+    this.selectedSlNos,
+    this.unitPrice,
+    this.totalAmount,
+    this.selectedTambolaTickets,
   });
 
   @override
@@ -20,13 +37,146 @@ class TicketPurchasePage extends StatefulWidget {
 }
 
 class _TicketPurchasePageState extends State<TicketPurchasePage> {
-  // Wallet balance (in a real app, this would come from a state management solution)
-  double walletBalance = 1000.0;
-  final double ticketPrice = 20.0; // Fixed price of ₹20
+  bool _isPurchasing = false;
+
+  double get walletBalance =>
+      Provider.of<WalletProvider>(context, listen: true).balance;
+
+  /// Resolves the live TicketModel from TicketProvider if available in DB
+  TicketModel? get _dbTicket {
+    final tid = (widget.ticket?['id'] ??
+            widget.ticket?['ticketId'] ??
+            widget.ticket?['ticket_id'] ??
+            '')
+        .toString()
+        .trim();
+    if (tid.isEmpty) return null;
+    try {
+      final ticketProv = Provider.of<TicketProvider>(context, listen: false);
+      final clean = tid.replaceAll(RegExp(r'[\s\-_#]'), '').toLowerCase();
+      return ticketProv.tickets.firstWhere(
+        (t) =>
+            t.ticketId == tid ||
+            t.ticketId.replaceAll(RegExp(r'[\s\-_#]'), '').toLowerCase() == clean,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String get ticketId {
+    final fromDb = _dbTicket?.ticketId;
+    if (fromDb != null && fromDb.isNotEmpty) {
+      return fromDb.startsWith('#') ? fromDb.substring(1).trim() : fromDb.trim();
+    }
+    final raw = (widget.ticket?['id'] ??
+            widget.ticket?['ticketId'] ??
+            widget.ticket?['ticket_id'] ??
+            '')
+        .toString()
+        .trim();
+    return raw.startsWith('#') ? raw.substring(1).trim() : raw;
+  }
+
+  String get ticketName {
+    final db = _dbTicket;
+    if (db != null && db.ticketTitle.isNotEmpty) return db.ticketTitle;
+    final fromWidget = widget.ticket?['ticket'] ??
+        widget.ticket?['ticket_title'] ??
+        widget.ticket?['ticketTitle'];
+    if (fromWidget != null && fromWidget.isNotEmpty) return fromWidget;
+    return 'GaGa Housie Draw';
+  }
+
+  String get drawDate {
+    final db = _dbTicket;
+    if (db != null && db.drawDate.isNotEmpty) return db.drawDate;
+    final fromWidget = widget.ticket?['date'] ??
+        widget.ticket?['draw_date'] ??
+        widget.ticket?['drawDate'];
+    if (fromWidget != null && fromWidget.isNotEmpty) return fromWidget;
+    return '';
+  }
+
+  String get drawTime {
+    final db = _dbTicket;
+    if (db != null && db.drawTime.isNotEmpty) return db.drawTime;
+    final fromWidget = widget.ticket?['time'] ??
+        widget.ticket?['draw_time'] ??
+        widget.ticket?['drawTime'];
+    if (fromWidget != null && fromWidget.isNotEmpty) return fromWidget;
+    return '';
+  }
+
+  double get unitTicketPrice {
+    if (widget.unitPrice != null && widget.unitPrice! > 0) {
+      return widget.unitPrice!;
+    }
+    final db = _dbTicket;
+    if (db != null) {
+      final clean = db.price
+          .replaceAll('₹', '')
+          .replaceAll('\$', '')
+          .replaceAll(',', '')
+          .trim();
+      final p = double.tryParse(clean);
+      if (p != null && p > 0) return p;
+    }
+    final raw = (widget.ticket?['price'] ?? widget.ticket?['ticket_price'] ?? '')
+        .toString()
+        .replaceAll('₹', '')
+        .replaceAll('\$', '')
+        .replaceAll(',', '')
+        .trim();
+    return double.tryParse(raw) ?? 20.0;
+  }
+
+  int get selectedQuantity {
+    if (widget.selectedSlNos != null && widget.selectedSlNos!.isNotEmpty) {
+      return widget.selectedSlNos!.length;
+    }
+    if (widget.selectedCount > 0) {
+      return widget.selectedCount;
+    }
+    final rawCount = int.tryParse(widget.ticket?['selectedCount'] ?? '');
+    if (rawCount != null && rawCount > 0) {
+      return rawCount;
+    }
+    return 1;
+  }
+
+  double get totalPayableAmount {
+    if (widget.totalAmount != null && widget.totalAmount! > 0) {
+      return widget.totalAmount!;
+    }
+    final rawTotal = double.tryParse(widget.ticket?['totalPrice'] ?? '');
+    if (rawTotal != null && rawTotal > 0) {
+      return rawTotal;
+    }
+    return unitTicketPrice * selectedQuantity;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      final user = auth.currentUser;
+      if (user != null) {
+        final walletProv = Provider.of<WalletProvider>(context, listen: false);
+        walletProv.fetchOrCreateWallet(
+          userId: user.id.toString(),
+          userEmail: user.email,
+        );
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final double total = ticketPrice;
+    final walletProv = Provider.of<WalletProvider>(context);
+    final double walletBalance = walletProv.balance;
+    final double total = totalPayableAmount;
     final bool hasSufficientBalance = walletBalance >= total;
 
     return Scaffold(
@@ -83,9 +233,11 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
 
   /// Ticket & Draw Hero Information Card
   Widget _buildTicketHeroCard() {
-    final String ticketName = widget.ticket?['ticket'] ?? 'Ticket #001';
-    final String date = widget.ticket?['date'] ?? '25/09/2023';
-    final String time = widget.ticket?['time'] ?? '07:00 PM';
+    final String name = ticketName;
+    final String date = drawDate;
+    final String time = drawTime;
+    final int qty = selectedQuantity;
+    final double uPrice = unitTicketPrice;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -134,7 +286,7 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      ticketName,
+                      name,
                       style: const TextStyle(
                         color: Color(0xFF0F3B2C),
                         fontSize: 16.5,
@@ -143,9 +295,11 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    const Text(
-                      'Live Tambola Housie Draw',
-                      style: TextStyle(
+                    Text(
+                      qty > 1
+                          ? '$qty Tambola Tickets Selected'
+                          : 'Live Tambola Housie Draw',
+                      style: const TextStyle(
                         color: Color(0xFF64748B),
                         fontSize: 11.5,
                         fontWeight: FontWeight.w500,
@@ -194,7 +348,7 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                 child: _buildInfoChip(
                   icon: Icons.calendar_today_outlined,
                   label: 'Draw Date',
-                  value: date,
+                  value: date.isNotEmpty ? date : 'Live Today',
                 ),
               ),
               const SizedBox(width: 8),
@@ -202,20 +356,51 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                 child: _buildInfoChip(
                   icon: Icons.access_time_rounded,
                   label: 'Draw Time',
-                  value: time,
+                  value: time.isNotEmpty ? time : 'Upcoming',
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: _buildInfoChip(
                   icon: Icons.sell_outlined,
-                  label: 'Ticket Price',
-                  value: '₹${ticketPrice.toStringAsFixed(0)}',
+                  label: qty > 1 ? 'Price/Ticket' : 'Ticket Price',
+                  value: '₹${uPrice.toStringAsFixed(0)}',
                   isPrice: true,
                 ),
               ),
             ],
           ),
+          if (widget.selectedSlNos != null && widget.selectedSlNos!.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00B894).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: const Color(0xFF00B894).withOpacity(0.2),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.check_circle_outline,
+                    size: 14,
+                    color: Color(0xFF00B894),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Selected SL: ${widget.selectedSlNos!.join(', ')} ($qty tickets)',
+                    style: const TextStyle(
+                      color: Color(0xFF0F3B2C),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -271,6 +456,9 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
 
   /// FinTech-Grade Order Breakdown Card
   Widget _buildOrderSummaryCard(double total) {
+    final int qty = selectedQuantity;
+    final double uPrice = unitTicketPrice;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -306,10 +494,27 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
           Divider(color: Colors.black.withOpacity(0.06), height: 1),
           const SizedBox(height: 10),
 
-          _buildBreakdownRow(
-            'Ticket Price',
-            '₹${total.toStringAsFixed(2)}',
-          ),
+          if (qty > 1) ...[
+            _buildBreakdownRow(
+              'Price per Ticket',
+              '₹${uPrice.toStringAsFixed(2)}',
+            ),
+            const SizedBox(height: 6),
+            _buildBreakdownRow(
+              'Selected Quantity',
+              '$qty tickets${widget.selectedSlNos != null && widget.selectedSlNos!.isNotEmpty ? " (SL: ${widget.selectedSlNos!.join(', ')})" : ""}',
+            ),
+            const SizedBox(height: 6),
+            _buildBreakdownRow(
+              'Subtotal ($qty × ₹${uPrice.toStringAsFixed(0)})',
+              '₹${(uPrice * qty).toStringAsFixed(2)}',
+            ),
+          ] else ...[
+            _buildBreakdownRow(
+              'Ticket Price',
+              '₹${uPrice.toStringAsFixed(2)}',
+            ),
+          ],
           const SizedBox(height: 6),
           _buildBreakdownRow(
             'Convenience Fee',
@@ -548,7 +753,7 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
           ],
         ),
         child: ElevatedButton(
-          onPressed: () => _confirmPurchase(total),
+          onPressed: _isPurchasing ? null : () => _confirmPurchase(total),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.transparent,
             shadowColor: Colors.transparent,
@@ -556,25 +761,48 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
               borderRadius: BorderRadius.circular(16),
             ),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(
-                Icons.lock_outline_rounded,
-                color: Colors.white,
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Confirm Purchase (₹${total.toStringAsFixed(2)})',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+          child: _isPurchasing
+              ? const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(width: 10),
+                    Text(
+                      'Deducting from Wallet...',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.lock_outline_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Confirm Purchase (₹${total.toStringAsFixed(2)})',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       );
     } else {
@@ -609,11 +837,225 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
     }
   }
 
-  void _confirmPurchase(double total) {
+  Future<void> _confirmPurchase(double total) async {
+    final walletProv = Provider.of<WalletProvider>(context, listen: false);
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final user = auth.currentUser;
+
+    if (walletProv.balance < total) {
+      _showInsufficientBalanceDialog(total - walletProv.balance);
+      return;
+    }
+
+    setState(() => _isPurchasing = true);
+
     final String receiptId =
         DateTime.now().millisecondsSinceEpoch.toString().substring(7);
-    final String ticketTitle = widget.ticket?['ticket'] ?? 'Ticket #001';
-    final String ticketDate = widget.ticket?['date'] ?? 'Upcoming Draw';
+    final String tTitle = ticketName;
+    final String tDate = drawDate.isNotEmpty ? drawDate : 'Live Today';
+    final int qty = selectedQuantity;
+    final slNosStr = widget.selectedSlNos != null && widget.selectedSlNos!.isNotEmpty
+        ? ' (SL: ${widget.selectedSlNos!.join(', ')})'
+        : (qty > 1 ? ' ($qty tickets)' : '');
+
+    try {
+      final success = await walletProv.deductForPurchase(
+        userId: user?.id?.toString() ?? '1',
+        userEmail: user?.email ?? 'user@gagahousie.com',
+        amount: total,
+        description: 'Purchased $tTitle$slNosStr',
+        referenceId: 'RCP-$receiptId',
+      );
+
+      if (success) {
+        // Record ticket purchase in public.ticket_purchases and mark tambola_tickets as Sold Out
+        try {
+          final sls = widget.selectedSlNos ?? [1];
+          final Map<int, List<List<int?>>> gridMap = {};
+          final Map<int, String> snMap = {};
+          final Map<int, String> codeMap = {};
+
+          if (widget.selectedTambolaTickets != null) {
+            for (final tkt in widget.selectedTambolaTickets!) {
+              final sl = tkt['slNo'] is int
+                  ? tkt['slNo'] as int
+                  : int.tryParse(tkt['slNo']?.toString() ?? '1') ?? 1;
+              if (tkt['ticketData'] != null) {
+                final raw = tkt['ticketData'];
+                if (raw is Map && raw['ticketData'] is List) {
+                  gridMap[sl] = (raw['ticketData'] as List)
+                      .map<List<int?>>((r) => (r as List)
+                          .map<int?>((c) =>
+                              c == null ? null : int.tryParse(c.toString()))
+                          .toList())
+                      .toList();
+                } else if (raw is List) {
+                  gridMap[sl] = raw
+                      .map<List<int?>>((r) => (r as List)
+                          .map<int?>((c) =>
+                              c == null ? null : int.tryParse(c.toString()))
+                          .toList())
+                      .toList();
+                }
+              }
+              if (tkt['serialNumber'] != null) {
+                snMap[sl] = tkt['serialNumber'].toString();
+              }
+              if (tkt['uniqueCode'] != null) {
+                codeMap[sl] = tkt['uniqueCode'].toString();
+              }
+            }
+          }
+
+          final tid = ticketId;
+          await TicketService.instance.recordTicketPurchase(
+            userId: user?.id ?? 1,
+            userEmail: user?.email ?? 'user@gagahousie.com',
+            userName: user?.fullName ?? 'Player',
+            ticketId: tid,
+            ticketTitle: tTitle,
+            drawDate: tDate,
+            drawTime: drawTime,
+            slNos: sls,
+            pricePerTicket: widget.unitPrice ?? (total / sls.length),
+            ticketDataBySl: gridMap.isNotEmpty ? gridMap : null,
+            serialNumberBySl: snMap.isNotEmpty ? snMap : null,
+            uniqueCodeBySl: codeMap.isNotEmpty ? codeMap : null,
+          );
+
+          if (mounted) {
+            // Refresh tambola tickets in TicketProvider cache so status becomes Sold Out
+            final ticketProv =
+                Provider.of<TicketProvider>(context, listen: false);
+            await ticketProv.fetchTambolaTickets(tid);
+          }
+        } catch (e) {
+          debugPrint('⚠️ [RECORD PURCHASE NOTICE] $e');
+        }
+      }
+
+      setState(() => _isPurchasing = false);
+
+      if (!success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(walletProv.errorMessage ??
+                  'Payment deduction failed. Please try again.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (mounted) {
+        _showSuccessDialog(total, receiptId, tTitle, tDate);
+      }
+    } on InsufficientBalanceException catch (e) {
+      setState(() => _isPurchasing = false);
+      if (mounted) {
+        _showInsufficientBalanceDialog(e.required - e.available);
+      }
+    } catch (e) {
+      setState(() => _isPurchasing = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showInsufficientBalanceDialog(double shortfall) {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final walletProv = Provider.of<WalletProvider>(context, listen: false);
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0D281E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: const BorderSide(color: Color(0xFFDC2626), width: 1.2),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  color: Color(0xFFDC2626), size: 26),
+              SizedBox(width: 8),
+              Text(
+                'Insufficient Balance',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 17,
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Current Balance: ₹${walletProv.balance.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'You need ₹${shortfall.toStringAsFixed(2)} more in your GaGa wallet to purchase this ticket.',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Please top up your wallet with UPI or Bank screenshot to proceed.',
+                style: TextStyle(
+                  color: Color(0xFF00E676),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel',
+                  style: TextStyle(color: Colors.white70)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const WalletPage()),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryGreen,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text('Recharge Wallet Now'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showSuccessDialog(
+      double total, String receiptId, String ticketTitle, String ticketDate) {
+    final walletProv = Provider.of<WalletProvider>(context, listen: false);
 
     showDialog(
       context: context,
@@ -776,8 +1218,15 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                       const SizedBox(height: 6),
                       _buildDialogRow('Draw Date:', ticketDate),
                       const SizedBox(height: 6),
-                      _buildDialogRow('Ticket Price:',
-                          '₹${ticketPrice.toStringAsFixed(2)}'),
+                      if (selectedQuantity > 1) ...[
+                        _buildDialogRow('Selected Quantity:', '$selectedQuantity tickets'),
+                        const SizedBox(height: 6),
+                        _buildDialogRow('Price per ticket:',
+                            '₹${unitTicketPrice.toStringAsFixed(2)}'),
+                      ] else ...[
+                        _buildDialogRow('Ticket Price:',
+                            '₹${unitTicketPrice.toStringAsFixed(2)}'),
+                      ],
                       const SizedBox(height: 10),
                       Divider(color: Colors.black.withOpacity(0.06), height: 1),
                       const SizedBox(height: 10),
@@ -787,7 +1236,7 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                       const SizedBox(height: 6),
                       _buildDialogRow(
                         'Remaining Balance:',
-                        '₹${(walletBalance - total).toStringAsFixed(2)}',
+                        '₹${walletProv.balance.toStringAsFixed(2)}',
                         isSuccess: true,
                       ),
                     ],
@@ -821,9 +1270,6 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                   ),
                   child: ElevatedButton(
                     onPressed: () {
-                      setState(() {
-                        walletBalance -= total;
-                      });
                       Navigator.pop(context); // Dismiss dialog
                       Navigator.pushReplacement(
                         context,
@@ -864,9 +1310,6 @@ class _TicketPurchasePageState extends State<TicketPurchasePage> {
                   height: 38,
                   child: TextButton(
                     onPressed: () {
-                      setState(() {
-                        walletBalance -= total;
-                      });
                       Navigator.pop(context); // Dismiss dialog
                       Navigator.pop(context); // Return to previous screen
                       ScaffoldMessenger.of(context).showSnackBar(

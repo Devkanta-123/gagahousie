@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
+import '../models/ticket_purchase_model.dart';
+import '../services/ticket_service.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
-import 'dart:math';
+import 'draw_page.dart';
 
-class TicketDetailsPage extends StatelessWidget {
+class TicketDetailsPage extends StatefulWidget {
   final String ticketNumber;
   final String date;
   final String time;
   final String price;
   final String ticketId;
+  final TicketPurchaseModel? purchase;
+  final int? slNo;
+  final List<List<int?>>? ticketData;
+  final String? serialNumber;
+  final String? uniqueCode;
 
   const TicketDetailsPage({
     super.key,
@@ -17,10 +24,85 @@ class TicketDetailsPage extends StatelessWidget {
     required this.time,
     required this.price,
     required this.ticketId,
+    this.purchase,
+    this.slNo,
+    this.ticketData,
+    this.serialNumber,
+    this.uniqueCode,
   });
 
   @override
+  State<TicketDetailsPage> createState() => _TicketDetailsPageState();
+}
+
+class _TicketDetailsPageState extends State<TicketDetailsPage> {
+  late List<List<int?>> _grid;
+  late int _slNo;
+  late String _serialNumber;
+  late String _uniqueCode;
+  late String _playerName;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initData();
+  }
+
+  void _initData() {
+    if (widget.purchase != null) {
+      _grid = widget.purchase!.ticketData;
+      _slNo = widget.purchase!.slNo;
+      _serialNumber = widget.purchase!.serialNumber;
+      _uniqueCode = widget.purchase!.uniqueCode;
+      _playerName = widget.purchase!.userName;
+    } else {
+      _slNo = widget.slNo ?? 1;
+      _grid = widget.ticketData ??
+          List.generate(3, (_) => List<int?>.filled(9, null));
+      _serialNumber = widget.serialNumber ??
+          'SN: TKT-${_slNo.toString().padLeft(3, '0')}';
+      _uniqueCode =
+          widget.uniqueCode ?? 'CODE: GH-${widget.ticketId}-SL$_slNo';
+      _playerName = 'Player';
+
+      final hasNumbers =
+          _grid.any((row) => row.any((c) => c != null && c > 0));
+      if (!hasNumbers) {
+        _fetchTicketGrid();
+      }
+    }
+  }
+
+  Future<void> _fetchTicketGrid() async {
+    setState(() => _isLoading = true);
+    try {
+      final tambolas =
+          await TicketService.instance.fetchTambolaTickets(widget.ticketId);
+      final match = tambolas.firstWhere(
+        (t) => t.slNo == _slNo,
+        orElse: () => tambolas.isNotEmpty ? tambolas.first : tambolas.first,
+      );
+      if (mounted) {
+        setState(() {
+          _grid = match.ticketData;
+          _serialNumber = match.serialNumber;
+          _uniqueCode = match.uniqueCode;
+          _playerName =
+              match.playerName.isNotEmpty && match.playerName != 'Available'
+                  ? match.playerName
+                  : 'Player';
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final title = widget.purchase?.ticketTitle ?? widget.ticketNumber;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
@@ -28,7 +110,7 @@ class TicketDetailsPage extends StatelessWidget {
           /// GA GA APP HEADER - Full width consistent branded header
           GaGaAppHeader(
             showBackButton: true,
-            subtitle: '$ticketNumber • Ticket Details',
+            subtitle: '$title • Ticket Details',
           ),
           Expanded(
             child: SingleChildScrollView(
@@ -42,6 +124,40 @@ class TicketDetailsPage extends StatelessWidget {
                   /// ACTIVE TICKETS SECTION
                   _buildActiveTicketsSection(),
                   const SizedBox(height: 16),
+
+                  /// ENTER LIVE DRAW BUTTON
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF7971E),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 2,
+                      ),
+                      icon: const Icon(Icons.play_circle_fill_rounded,
+                          color: Colors.white, size: 20),
+                      label: const Text(
+                        'Play in Live Draw',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => DrawPage(ticketId: widget.ticketId),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -52,6 +168,16 @@ class TicketDetailsPage extends StatelessWidget {
   }
 
   Widget _buildMainTicketCard() {
+    final displayDate = widget.purchase?.drawDate.isNotEmpty == true
+        ? widget.purchase!.drawDate
+        : widget.date;
+    final displayTime = widget.purchase?.drawTime.isNotEmpty == true
+        ? widget.purchase!.drawTime
+        : widget.time;
+    final displayPrice = widget.purchase != null
+        ? widget.purchase!.price.toStringAsFixed(0)
+        : widget.price;
+
     return _glassCard(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -108,7 +234,7 @@ class TicketDetailsPage extends StatelessWidget {
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
-                    "₹$price",
+                    "₹$displayPrice",
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -119,13 +245,17 @@ class TicketDetailsPage extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            _infoRow("Ticket ID", ticketId),
+            _infoRow("Ticket ID", widget.ticketId),
             const SizedBox(height: 8),
-            _infoRow("Date", date),
+            _infoRow("SL Number", "SL #$_slNo"),
             const SizedBox(height: 8),
-            _infoRow("Time", time),
+            _infoRow("Serial No.", _serialNumber),
             const SizedBox(height: 8),
-            _infoRow("Ticket Sl. No.", ticketNumber),
+            _infoRow("Date", displayDate),
+            const SizedBox(height: 8),
+            _infoRow("Time", displayTime),
+            const SizedBox(height: 8),
+            _infoRow("Status", "Booked & Active"),
           ],
         ),
       ),
@@ -168,101 +298,59 @@ class TicketDetailsPage extends StatelessWidget {
   }
 
   Widget _buildActiveTicketsSection() {
-    // Generate 5 different tickets with random numbers
-    final tickets = [
-      _generateTambolaTicket("", "SN: TKT-001", "CODE: RS-AMB-001"),
-      _generateTambolaTicket("", "SN: TKT-002", "CODE: PP-AMB-002"),
-      _generateTambolaTicket("", "SN: TKT-003", "CODE: AK-AMB-003"),
-      _generateTambolaTicket("", "SN: TKT-004", "CODE: SR-AMB-004"),
-      _generateTambolaTicket("", "SN: TKT-005", "CODE: VS-AMB-005"),
-    ];
+    if (_isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: CircularProgressIndicator(color: AppColors.primaryGreen),
+        ),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-          child: Text(
-            "Your Tickets",
-            style: TextStyle(
-              color: Color(0xFF2C3E50),
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                "Your Tambola Ticket",
+                style: TextStyle(
+                  color: Color(0xFF2C3E50),
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryGreen.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  "SL #$_slNo",
+                  style: const TextStyle(
+                    color: AppColors.primaryGreen,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        ...tickets
-            .map((ticket) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _buildTicketCard(
-                    playerName: ticket['playerName']!,
-                    serialNumber: ticket['serialNumber']!,
-                    uniqueCode: ticket['uniqueCode']!,
-                    ticketData: ticket['ticketData'] as List<List<int?>>,
-                    slNo: ticket['slNo'] as int,
-                  ),
-                ))
-            .toList(),
+        _buildTicketCard(
+          playerName: _playerName,
+          serialNumber: _serialNumber,
+          uniqueCode: _uniqueCode,
+          ticketData: _grid,
+          slNo: _slNo,
+        ),
       ],
     );
-  }
-
-  Map<String, dynamic> _generateTambolaTicket(
-      String playerName, String serialNumber, String uniqueCode) {
-    Random random = Random();
-
-    // Create 3x9 grid initially filled with null (empty slots)
-    List<List<int?>> ticket = List.generate(3, (_) => List.filled(9, null));
-
-    // Each row must have exactly 5 numbers (standard tambola)
-    for (int row = 0; row < 3; row++) {
-      // Generate random positions for this row (5 positions out of 9)
-      List<int> positions = List.generate(9, (index) => index);
-      positions.shuffle();
-      positions = positions.take(5).toList();
-      positions.sort();
-
-      // For each column, generate number in the correct range
-      for (int col = 0; col < 9; col++) {
-        if (positions.contains(col)) {
-          // Numbers for each column range:
-          // Col 0: 1-9, Col 1: 10-19, Col 2: 20-29, Col 3: 30-39
-          // Col 4: 40-49, Col 5: 50-59, Col 6: 60-69, Col 7: 70-79, Col 8: 80-90
-          int minNum = col == 0 ? 1 : (col * 10);
-          int maxNum = col == 8 ? 90 : (col * 10) + 9;
-
-          int number = minNum + random.nextInt(maxNum - minNum + 1);
-
-          // Ensure no duplicate numbers in the same column across rows
-          bool duplicate = true;
-          int attempts = 0;
-          while (duplicate && attempts < 10) {
-            duplicate = false;
-            for (int r = 0; r < row; r++) {
-              if (ticket[r][col] == number) {
-                duplicate = true;
-                number = minNum + random.nextInt(maxNum - minNum + 1);
-                break;
-              }
-            }
-            attempts++;
-          }
-
-          ticket[row][col] = number;
-        }
-      }
-    }
-
-    // Generate random SL number (1-7)
-    int slNo = random.nextInt(7) + 1;
-
-    return {
-      'playerName': playerName,
-      'serialNumber': serialNumber,
-      'uniqueCode': uniqueCode,
-      'ticketData': ticket,
-      'slNo': slNo,
-    };
   }
 
   Widget _buildTicketCard({

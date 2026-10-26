@@ -1,10 +1,12 @@
-// screens/wallet_page.dart
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
-import 'dart:io';
 
 class WalletPage extends StatefulWidget {
   const WalletPage({super.key});
@@ -14,67 +16,103 @@ class WalletPage extends StatefulWidget {
 }
 
 class _WalletPageState extends State<WalletPage> {
+  final TextEditingController _amountController =
+      TextEditingController(text: '100');
+  final TextEditingController _utrController = TextEditingController();
   final TextEditingController _ifscController = TextEditingController();
   final TextEditingController _accountController = TextEditingController();
   File? _screenshotFile;
   final ImagePicker _picker = ImagePicker();
+  bool _isSubmitting = false;
 
-  // Dummy QR Code image path
   final String qrCodeImage = 'assets/qr_scanner.png';
   final String upiId = 'gagahousie@upi';
 
-  // Balance state
-  final double _balance = 1000.0;
+  final List<double> _presetAmounts = [50.0, 100.0, 200.0, 500.0, 1000.0];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadWalletData();
+    });
+  }
+
+  void _loadWalletData() {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final user = auth.currentUser;
+    if (user != null) {
+      final walletProv = Provider.of<WalletProvider>(context, listen: false);
+      walletProv.fetchOrCreateWallet(
+        userId: user.id.toString(),
+        userEmail: user.email,
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final walletProv = Provider.of<WalletProvider>(context);
+    final double balance = walletProv.balance;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Column(
         children: [
-          // Reusable Branded GaGa Header with integrated borderless balance card,
-          // search bar and notification bell
           GaGaAppHeader(
             showBackButton: true,
             compact: true,
             showBalance: true,
-            balance: _balance,
+            balance: balance,
             showRechargeButton: false,
             subtitle: 'Wallet & Top Up',
           ),
           Expanded(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Compact QR Code Scanner Section (White Card + Green Text Theme)
-                  _buildCompactQRCodeSection(),
+            child: RefreshIndicator(
+              color: AppColors.primaryGreen,
+              onRefresh: () async {
+                await walletProv.refresh();
+              },
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0, vertical: 14.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // QR Code Scanner Section
+                    _buildCompactQRCodeSection(),
 
-                  const SizedBox(height: 14),
+                    const SizedBox(height: 14),
 
-                  // Primary Action: Open Modal Form for Screenshot & Bank Details
-                  _buildSubmitProofButton(),
+                    // Primary Action: Open Modal Form for Screenshot & Bank Details
+                    _buildSubmitProofButton(),
 
-                  if (_screenshotFile != null) ...[
-                    const SizedBox(height: 10),
-                    _buildPendingProofIndicator(),
+                    if (_screenshotFile != null) ...[
+                      const SizedBox(height: 10),
+                      _buildPendingProofIndicator(),
+                    ],
+
+                    const SizedBox(height: 16),
+
+                    // Recharge Requests Status Card (Pending / Approved / Rejected with remarks)
+                    _buildMyRechargeRequestsCard(walletProv),
+
+                    const SizedBox(height: 16),
+
+                    // Quick Recharge Instructions
+                    _buildRechargeGuideCard(),
+
+                    const SizedBox(height: 16),
+
+                    // Real Wallet Transactions / Passbook
+                    _buildRecentTransactionsCard(walletProv),
+
+                    const SizedBox(height: 24),
                   ],
-
-                  const SizedBox(height: 16),
-
-                  // Quick Recharge Instructions (White Card + Green Text)
-                  _buildRechargeGuideCard(),
-
-                  const SizedBox(height: 16),
-
-                  // Recent Wallet History / Passbook (White Card + Green Text)
-                  _buildRecentTransactionsCard(),
-
-                  const SizedBox(height: 24),
-                ],
+                ),
               ),
             ),
           ),
@@ -83,7 +121,7 @@ class _WalletPageState extends State<WalletPage> {
     );
   }
 
-  /// Compact "Scan to Recharge" QR Card with white background and crisp green text
+  /// Compact "Scan to Recharge" QR Card
   Widget _buildCompactQRCodeSection() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -144,7 +182,7 @@ class _WalletPageState extends State<WalletPage> {
           ),
           const SizedBox(height: 12),
 
-          // Compact QR Code Image Container (140x140)
+          // Compact QR Code Image Container
           Container(
             width: 140,
             height: 140,
@@ -203,7 +241,7 @@ class _WalletPageState extends State<WalletPage> {
 
           const SizedBox(height: 12),
 
-          // Copyable UPI ID chip with rich green styling
+          // Copyable UPI ID chip
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
@@ -316,7 +354,6 @@ class _WalletPageState extends State<WalletPage> {
     );
   }
 
-  /// Indicator shown when screenshot is already selected
   Widget _buildPendingProofIndicator() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -363,7 +400,206 @@ class _WalletPageState extends State<WalletPage> {
     );
   }
 
-  /// 3-step recharge guidance with white card and green text
+  /// Recharge Requests Status Card showing user's pending, approved, and rejected requests with remarks
+  Widget _buildMyRechargeRequestsCard(WalletProvider walletProv) {
+    final requests = walletProv.userRecharges;
+    if (requests.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF00B894).withOpacity(0.2),
+          width: 1.1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryGreen.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Row(
+                children: [
+                  Icon(
+                    Icons.history_rounded,
+                    color: AppColors.primaryGreen,
+                    size: 19,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'Recharge Request Status',
+                    style: TextStyle(
+                      color: AppColors.primaryGreen,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+              Text(
+                '${requests.length} Requests',
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...requests.take(4).map((req) {
+            final bool isApproved = req.isApproved;
+            final bool isRejected = req.isRejected;
+            final bool isPending = req.isPending;
+
+            Color statusColor = const Color(0xFFD97706);
+            IconData statusIcon = Icons.hourglass_top_rounded;
+            String statusText = 'Pending Approval';
+
+            if (isApproved) {
+              statusColor = AppColors.primaryGreen;
+              statusIcon = Icons.check_circle_rounded;
+              statusText = 'Approved & Credited';
+            } else if (isRejected) {
+              statusColor = const Color(0xFFDC2626);
+              statusIcon = Icons.cancel_rounded;
+              statusText = 'Rejected';
+            }
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(0.04),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: statusColor.withOpacity(0.25),
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(statusIcon, color: statusColor, size: 16),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '₹${req.amount.toStringAsFixed(2)} • ${req.paymentMethod.toUpperCase()}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            if (req.transactionUtr.isNotEmpty)
+                              Text(
+                                'UTR: ${req.transactionUtr}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: statusColor,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          statusText,
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  // If Rejected, display admin remarks prominently
+                  if (isRejected &&
+                      req.adminRemarks != null &&
+                      req.adminRemarks!.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEE2E2),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFFCA5A5)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.info_outline_rounded,
+                              size: 15, color: Color(0xFFDC2626)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Remarks: ${req.adminRemarks}',
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFFB91C1C),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  if (isPending) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Admin is reviewing your proof. You will receive an instant sound notification upon approval.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.amber.shade900,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  /// 3-step recharge guidance
   Widget _buildRechargeGuideCard() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -389,7 +625,7 @@ class _WalletPageState extends State<WalletPage> {
             children: [
               Icon(
                 Icons.lightbulb_outline_rounded,
-                color: Color(0xFF00B894),
+                color: Color(0xFF00E676),
                 size: 20,
               ),
               SizedBox(width: 8),
@@ -454,31 +690,9 @@ class _WalletPageState extends State<WalletPage> {
     );
   }
 
-  /// Recent transactions mock list with white card and green text
-  Widget _buildRecentTransactionsCard() {
-    final List<Map<String, dynamic>> transactions = [
-      {
-        'title': 'Wallet Top-Up',
-        'date': 'Today, 11:30 AM',
-        'amount': '+₹500.00',
-        'isCredit': true,
-        'status': 'Approved'
-      },
-      {
-        'title': 'Ticket #TKT001 Purchase',
-        'date': 'Yesterday, 04:15 PM',
-        'amount': '-₹100.00',
-        'isCredit': false,
-        'status': 'Completed'
-      },
-      {
-        'title': 'Tambola Quick Win',
-        'date': '12 May, 02:40 PM',
-        'amount': '+₹250.00',
-        'isCredit': true,
-        'status': 'Credited'
-      },
-    ];
+  /// Real Transactions Passbook
+  Widget _buildRecentTransactionsCard(WalletProvider walletProv) {
+    final transactions = walletProv.transactions;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -522,23 +736,58 @@ class _WalletPageState extends State<WalletPage> {
             ],
           ),
           const SizedBox(height: 12),
-          ...transactions.map((tx) => Padding(
+          if (transactions.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.receipt_outlined,
+                      color: Colors.grey.shade400,
+                      size: 36,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'No wallet transactions yet.',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Recharge your wallet to purchase tickets!',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            ...transactions.map((tx) {
+              final bool isCredit = tx.isCredit;
+              return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6.0),
                 child: Row(
                   children: [
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: (tx['isCredit'] as bool)
+                        color: isCredit
                             ? const Color(0xFF00B894).withOpacity(0.12)
                             : const Color(0xFFFF6B6B).withOpacity(0.12),
                         shape: BoxShape.circle,
                       ),
                       child: Icon(
-                        (tx['isCredit'] as bool)
+                        isCredit
                             ? Icons.arrow_downward_rounded
                             : Icons.arrow_upward_rounded,
-                        color: (tx['isCredit'] as bool)
+                        color: isCredit
                             ? const Color(0xFF00B894)
                             : const Color(0xFFFF6B6B),
                         size: 15,
@@ -550,7 +799,9 @@ class _WalletPageState extends State<WalletPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            tx['title'] as String,
+                            tx.description.isNotEmpty
+                                ? tx.description
+                                : (isCredit ? 'Wallet Top-Up' : 'Ticket Purchase'),
                             style: const TextStyle(
                               color: Color(0xFF2C3E50),
                               fontSize: 12.5,
@@ -558,7 +809,7 @@ class _WalletPageState extends State<WalletPage> {
                             ),
                           ),
                           Text(
-                            tx['date'] as String,
+                            _formatDate(tx.createdAt),
                             style: const TextStyle(
                               color: Color(0xFF5A7A6E),
                               fontSize: 11,
@@ -571,9 +822,9 @@ class _WalletPageState extends State<WalletPage> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          tx['amount'] as String,
+                          '${isCredit ? "+" : "-"}₹${tx.amount.toStringAsFixed(2)}',
                           style: TextStyle(
-                            color: (tx['isCredit'] as bool)
+                            color: isCredit
                                 ? const Color(0xFF00B894)
                                 : const Color(0xFFFF6B6B),
                             fontSize: 13,
@@ -585,13 +836,17 @@ class _WalletPageState extends State<WalletPage> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 1.5),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF00B894).withOpacity(0.09),
+                            color: isCredit
+                                ? const Color(0xFF00B894).withOpacity(0.09)
+                                : const Color(0xFFFF6B6B).withOpacity(0.09),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
-                            tx['status'] as String,
-                            style: const TextStyle(
-                              color: AppColors.primaryGreen,
+                            isCredit ? 'Credited' : 'Debited',
+                            style: TextStyle(
+                              color: isCredit
+                                  ? AppColors.primaryGreen
+                                  : const Color(0xFFFF6B6B),
                               fontSize: 9.5,
                               fontWeight: FontWeight.w600,
                             ),
@@ -601,10 +856,21 @@ class _WalletPageState extends State<WalletPage> {
                     ),
                   ],
                 ),
-              )),
+              );
+            }),
         ],
       ),
     );
+  }
+
+  String _formatDate(DateTime? dt) {
+    if (dt == null) return 'Recent';
+    final now = DateTime.now();
+    final difference = now.difference(dt);
+    if (difference.inMinutes < 1) return 'Just now';
+    if (difference.inMinutes < 60) return '${difference.inMinutes} mins ago';
+    if (difference.inHours < 24) return '${difference.inHours} hrs ago';
+    return '${dt.day}/${dt.month}/${dt.year}';
   }
 
   /// MODAL BOTTOM SHEET FOR SCREENSHOT & IFSC / BANK ACCOUNT DETAILS
@@ -693,20 +959,222 @@ class _WalletPageState extends State<WalletPage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Upload your transfer receipt screenshot and bank details',
+                      'Enter amount paid and upload transfer receipt for admin approval',
                       style: TextStyle(
                         color: Colors.white.withOpacity(0.7),
                         fontSize: 12,
                       ),
                     ),
-                    const SizedBox(height: 18),
-
-                    // 1. Screenshot Upload Section
-                    _buildModalUploadScreenshot(setModalState),
-
                     const SizedBox(height: 16),
 
-                    // 2. IFSC Code Field
+                    // Amount Selection Chips & Custom Input
+                    const Text(
+                      'Recharge Amount (₹)',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      child: Row(
+                        children: _presetAmounts.map((amt) {
+                          final isSelected =
+                              _amountController.text.trim() ==
+                                  amt.toInt().toString();
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  setModalState(() {
+                                    _amountController.text =
+                                        amt.toInt().toString();
+                                  });
+                                },
+                                borderRadius: BorderRadius.circular(10),
+                                splashColor:
+                                    const Color(0xFF00E676).withOpacity(0.25),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? const Color(0xFF00E676)
+                                        : const Color(0xFF1B4D36),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? const Color(0xFF00E676)
+                                          : const Color(0xFF00E676)
+                                              .withOpacity(0.45),
+                                      width: isSelected ? 1.8 : 1.2,
+                                    ),
+                                    boxShadow: isSelected
+                                        ? [
+                                            BoxShadow(
+                                              color: const Color(0xFF00E676)
+                                                  .withOpacity(0.4),
+                                              blurRadius: 8,
+                                              offset: const Offset(0, 2),
+                                            ),
+                                          ]
+                                        : [
+                                            BoxShadow(
+                                              color:
+                                                  Colors.black.withOpacity(0.25),
+                                              blurRadius: 3,
+                                              offset: const Offset(0, 1),
+                                            ),
+                                          ],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (isSelected) ...[
+                                        const Icon(
+                                          Icons.check_circle_rounded,
+                                          size: 14,
+                                          color: Color(0xFF0B2519),
+                                        ),
+                                        const SizedBox(width: 4),
+                                      ],
+                                      Text(
+                                        '₹${amt.toInt()}',
+                                        style: TextStyle(
+                                          color: isSelected
+                                              ? const Color(0xFF0B2519)
+                                              : Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 14,
+                                          letterSpacing: 0.3,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _amountController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) {
+                        setModalState(() {});
+                      },
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Enter Custom Amount',
+                        prefixText: '₹ ',
+                        prefixStyle: const TextStyle(
+                          color: Color(0xFF00E676),
+                          fontWeight: FontWeight.bold,
+                        ),
+                        labelStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.75),
+                          fontSize: 13,
+                        ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.06),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: AppColors.primaryGreen.withOpacity(0.3),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: AppColors.primaryGreen.withOpacity(0.3),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF00E676),
+                            width: 1.5,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // UTR / Transaction Reference Number Field
+                    TextField(
+                      controller: _utrController,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Transaction UTR / Ref Number',
+                        labelStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.75),
+                          fontSize: 13,
+                        ),
+                        hintText: 'e.g. 12-digit UPI reference ID',
+                        hintStyle: TextStyle(
+                          color: Colors.white.withOpacity(0.35),
+                          fontSize: 12,
+                        ),
+                        prefixIcon: const Icon(
+                          Icons.tag_rounded,
+                          color: AppColors.primaryGreen,
+                          size: 20,
+                        ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.06),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: AppColors.primaryGreen.withOpacity(0.3),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: AppColors.primaryGreen.withOpacity(0.3),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF00E676),
+                            width: 1.5,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // Screenshot Upload Section
+                    _buildModalUploadScreenshot(setModalState),
+
+                    const SizedBox(height: 14),
+
+                    // IFSC Code Field (Optional)
                     TextField(
                       controller: _ifscController,
                       textCapitalization: TextCapitalization.characters,
@@ -715,7 +1183,7 @@ class _WalletPageState extends State<WalletPage> {
                         fontWeight: FontWeight.w600,
                       ),
                       decoration: InputDecoration(
-                        labelText: 'IFSC Code',
+                        labelText: 'Bank IFSC Code (Optional)',
                         labelStyle: TextStyle(
                           color: Colors.white.withOpacity(0.75),
                           fontSize: 13,
@@ -723,7 +1191,7 @@ class _WalletPageState extends State<WalletPage> {
                         hintText: 'e.g. HDFC0001234',
                         hintStyle: TextStyle(
                           color: Colors.white.withOpacity(0.35),
-                          fontSize: 13,
+                          fontSize: 12,
                         ),
                         prefixIcon: const Icon(
                           Icons.account_balance_rounded,
@@ -758,7 +1226,7 @@ class _WalletPageState extends State<WalletPage> {
 
                     const SizedBox(height: 14),
 
-                    // 3. Bank Account Number Field
+                    // Bank Account Number Field (Optional)
                     TextField(
                       controller: _accountController,
                       keyboardType: TextInputType.number,
@@ -767,15 +1235,15 @@ class _WalletPageState extends State<WalletPage> {
                         fontWeight: FontWeight.w600,
                       ),
                       decoration: InputDecoration(
-                        labelText: 'Bank Account Number',
+                        labelText: 'Bank Account Number (Optional)',
                         labelStyle: TextStyle(
                           color: Colors.white.withOpacity(0.75),
                           fontSize: 13,
                         ),
-                        hintText: 'Enter your 9-18 digit account number',
+                        hintText: 'Enter 9-18 digit account number',
                         hintStyle: TextStyle(
                           color: Colors.white.withOpacity(0.35),
-                          fontSize: 13,
+                          fontSize: 12,
                         ),
                         prefixIcon: const Icon(
                           Icons.credit_card_rounded,
@@ -808,7 +1276,7 @@ class _WalletPageState extends State<WalletPage> {
                       ),
                     ),
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
 
                     // Admin Processing Notice
                     Container(
@@ -830,7 +1298,7 @@ class _WalletPageState extends State<WalletPage> {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Admin verifies payment proofs within 10-15 minutes.',
+                              'Admin verifies payment proofs quickly. You will hear an alert sound upon approval.',
                               style: TextStyle(
                                 color: Colors.amberAccent,
                                 fontSize: 11,
@@ -845,9 +1313,11 @@ class _WalletPageState extends State<WalletPage> {
 
                     // Submit Button inside Modal
                     ElevatedButton(
-                      onPressed: () {
-                        _handleModalSubmit(modalContext);
-                      },
+                      onPressed: _isSubmitting
+                          ? null
+                          : () {
+                              _handleModalSubmit(modalContext, setModalState);
+                            },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primaryGreen,
                         foregroundColor: Colors.white,
@@ -857,15 +1327,38 @@ class _WalletPageState extends State<WalletPage> {
                         ),
                         elevation: 0,
                       ),
-                      child: const Text(
-                        'Submit Verification',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                          color: Colors.white,
-                        ),
-                      ),
+                      child: _isSubmitting
+                          ? const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(width: 10),
+                                Text(
+                                  'Uploading & Submitting...',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : const Text(
+                              'Submit Verification Request',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                                color: Colors.white,
+                              ),
+                            ),
                     ),
                   ],
                 ),
@@ -962,7 +1455,7 @@ class _WalletPageState extends State<WalletPage> {
     return GestureDetector(
       onTap: () => _pickImageModal(setModalState),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.04),
           borderRadius: BorderRadius.circular(12),
@@ -988,7 +1481,7 @@ class _WalletPageState extends State<WalletPage> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Upload Payment Screenshot',
+              'Upload Payment Screenshot *',
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
@@ -1093,7 +1586,19 @@ class _WalletPageState extends State<WalletPage> {
     );
   }
 
-  void _handleModalSubmit(BuildContext modalContext) {
+  Future<void> _handleModalSubmit(
+      BuildContext modalContext, StateSetter setModalState) async {
+    final double amount = double.tryParse(_amountController.text.trim()) ?? 0.0;
+    if (amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid recharge amount'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     if (_screenshotFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1104,108 +1609,148 @@ class _WalletPageState extends State<WalletPage> {
       return;
     }
 
-    if (_ifscController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter IFSC code'),
-          backgroundColor: Colors.red,
-        ),
+    setModalState(() => _isSubmitting = true);
+    setState(() => _isSubmitting = true);
+
+    try {
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      final user = auth.currentUser;
+      final walletProv = Provider.of<WalletProvider>(context, listen: false);
+
+      final String userId = user?.id?.toString() ?? '1';
+      final String userEmail = user?.email ?? 'user@gagahousie.com';
+      final String userName = user?.fullName ?? auth.username ?? 'User';
+      final String userPhone = user?.phone ?? '';
+
+      final success = await walletProv.submitRecharge(
+        userId: userId,
+        userEmail: userEmail,
+        userName: userName,
+        userPhone: userPhone,
+        amount: amount,
+        paymentMethod: 'UPI',
+        transactionUtr: _utrController.text.trim(),
+        proofFile: _screenshotFile!,
+        accountNumber: _accountController.text.trim(),
+        ifscCode: _ifscController.text.trim(),
       );
-      return;
-    }
 
-    if (_accountController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter bank account number'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
+      setModalState(() => _isSubmitting = false);
+      setState(() => _isSubmitting = false);
 
-    Navigator.pop(modalContext);
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF0D281E),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(
-              color: AppColors.primaryGreen.withOpacity(0.4),
+      if (!success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(walletProv.errorMessage ??
+                  'Failed to submit recharge request'),
+              backgroundColor: Colors.red,
             ),
-          ),
-          title: const Row(
-            children: [
-              Icon(
-                Icons.check_circle,
-                color: Color(0xFF00E676),
-                size: 28,
-              ),
-              SizedBox(width: 12),
-              Text(
-                'Success!',
-                style: TextStyle(
-                  color: AppColors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+          );
+        }
+        return;
+      }
+
+      Navigator.pop(modalContext);
+
+      // Show celebratory confirmation
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogCtx) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF0D281E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(
+                  color: AppColors.primaryGreen.withOpacity(0.4),
                 ),
               ),
-            ],
-          ),
-          content: const Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Admit will update your wallet amount shortly',
-                style: TextStyle(
-                  color: AppColors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons.check_circle,
+                    color: Color(0xFF00E676),
+                    size: 28,
+                  ),
+                  SizedBox(width: 12),
+                  Text(
+                    'Request Submitted!',
+                    style: TextStyle(
+                      color: AppColors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
-              SizedBox(height: 8),
-              Text(
-                'Your transaction is being processed. You will receive a notification once it is complete.',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 13,
-                  height: 1.3,
-                ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Recharge of ₹${amount.toStringAsFixed(2)} submitted successfully.',
+                    style: const TextStyle(
+                      color: AppColors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Admin will review your payment receipt. Once approved, your wallet will be credited and you will receive a real-time notification with sound!',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12.5,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                _ifscController.clear();
-                _accountController.clear();
-                setState(() {
-                  _screenshotFile = null;
-                });
-                Navigator.pop(context);
-              },
-              child: const Text(
-                'OK',
-                style: TextStyle(
-                  color: Color(0xFF00E676),
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    _utrController.clear();
+                    _ifscController.clear();
+                    _accountController.clear();
+                    setState(() {
+                      _screenshotFile = null;
+                    });
+                    Navigator.pop(dialogCtx);
+                  },
+                  child: const Text(
+                    'OK',
+                    style: TextStyle(
+                      color: Color(0xFF00E676),
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ],
+              ],
+            );
+          },
         );
-      },
-    );
+      }
+    } catch (e) {
+      setModalState(() => _isSubmitting = false);
+      setState(() => _isSubmitting = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error submitting request: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
+    _amountController.dispose();
+    _utrController.dispose();
     _ifscController.dispose();
     _accountController.dispose();
     super.dispose();

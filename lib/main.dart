@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
 import 'providers/ticket_provider.dart';
+import 'providers/wallet_provider.dart';
 import 'services/supabase_service.dart';
 import 'utils/constants.dart';
 import 'screens/splash_screen.dart';
@@ -31,6 +32,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => TicketProvider()..fetchTickets()),
+        ChangeNotifierProvider(create: (_) => WalletProvider()),
       ],
       child: MaterialApp(
         title: 'GaGa Housie',

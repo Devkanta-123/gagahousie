@@ -167,10 +167,10 @@ class TambolaTicketModel {
     };
   }
 
-  factory TambolaTicketModel.fromJson(Map<String, dynamic> json) {
+  /// Parses dynamic raw grid matrix from DB or JSON into standard 3x9 integer matrix
+  static List<List<int?>> parseTicketData(dynamic rawGrid) {
     List<List<int?>> grid = [];
-    if (json['ticket_data'] != null) {
-      final rawGrid = json['ticket_data'];
+    if (rawGrid != null) {
       if (rawGrid is List) {
         grid = rawGrid.map((row) {
           if (row is List) {
@@ -186,6 +186,11 @@ class TambolaTicketModel {
     if (grid.length != 3) {
       grid = List.generate(3, (_) => List<int?>.filled(9, null));
     }
+    return grid;
+  }
+
+  factory TambolaTicketModel.fromJson(Map<String, dynamic> json) {
+    final grid = parseTicketData(json['ticket_data']);
 
     return TambolaTicketModel(
       id: json['id'],
@@ -210,12 +215,16 @@ class TambolaTicketModel {
     final displayName = (playerName.isEmpty || playerName == 'Available')
         ? 'Ticket #$slNo'
         : playerName;
+    final isSold =
+        status.toLowerCase() == 'sold out' || status.toLowerCase() == 'booked';
     return {
       'slNo': slNo,
       'playerName': displayName,
       'serialNumber': serialNumber,
       'uniqueCode': uniqueCode,
       'selected': false,
+      'status': status,
+      'isSoldOut': isSold,
       'ticketData': {'ticketData': ticketData},
     };
   }

@@ -1,5 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/wallet_model.dart';
+import '../providers/wallet_provider.dart';
 import '../utils/constants.dart';
 import '../screens/wallet_page.dart';
 
@@ -60,6 +63,11 @@ class GaGaAppHeader extends StatefulWidget implements PreferredSizeWidget {
             ? (compact ? 150.0 : 170.0)
             : (compact ? 78.0 : (subtitle != null ? 115.0 : 85.0)),
       );
+
+  /// Opens the notifications bottom sheet from anywhere
+  static void showNotificationSheet(BuildContext context) {
+    _GaGaAppHeaderState._showNotificationSheet(context);
+  }
 
   @override
   State<GaGaAppHeader> createState() => _GaGaAppHeaderState();
@@ -297,19 +305,26 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                             color: Colors.white,
                             size: 20,
                           ),
-                          if (widget.notificationCount > 0)
-                            Positioned(
-                              top: 7,
-                              right: 7,
-                              child: Container(
-                                width: 8,
-                                height: 8,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFFFF5252),
-                                  shape: BoxShape.circle,
+                          Consumer<WalletProvider>(
+                            builder: (context, walletProv, _) {
+                              final unread = walletProv.unreadNotificationsCount;
+                              if (unread <= 0 && widget.notificationCount <= 0) {
+                                return const SizedBox.shrink();
+                              }
+                              return Positioned(
+                                top: 7,
+                                right: 7,
+                                child: Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFFF5252),
+                                    shape: BoxShape.circle,
+                                  ),
                                 ),
-                              ),
-                            ),
+                              );
+                            },
+                          ),
                         ],
                       ),
                     ),
@@ -412,17 +427,22 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                     ),
                   ),
                   const SizedBox(height: 1),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '₹${widget.balance.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                  Consumer<WalletProvider>(
+                    builder: (context, walletProv, _) {
+                      final double displayBalance = walletProv.balance;
+                      return FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '₹${displayBalance.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -535,136 +555,186 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
                   ),
                 ],
               ),
-              child: Column(
-                children: [
-                  const SizedBox(height: 12),
-                  // Drag Handle
-                  Container(
-                    width: 44,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryGreen.withOpacity(0.28),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
+              child: Consumer<WalletProvider>(
+                builder: (context, walletProv, _) {
+                  final notifications = walletProv.notifications;
+                  final unreadCount = walletProv.unreadNotificationsCount;
 
-                  // Header with Title, Badge & Close Button
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
+                  return Column(
+                    children: [
+                      const SizedBox(height: 12),
+                      // Drag Handle
+                      Container(
+                        width: 44,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryGreen.withOpacity(0.28),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Header with Title, Badge & Close Button
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryGreen.withOpacity(0.12),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.notifications_active_rounded,
-                                color: AppColors.primaryGreen,
-                                size: 20,
-                              ),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primaryGreen.withOpacity(0.12),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.notifications_active_rounded,
+                                    color: AppColors.primaryGreen,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                const Text(
+                                  'Notifications & Alerts',
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF0F3B2C),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                if (unreadCount > 0)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.primaryGreen.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '$unreadCount New',
+                                      style: const TextStyle(
+                                        color: AppColors.primaryGreen,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  )
+                                else if (notifications.isNotEmpty)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      '${notifications.length} Total',
+                                      style: TextStyle(
+                                        color: Colors.grey.shade700,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
-                            const SizedBox(width: 10),
-                            const Text(
-                              'Notifications & Alerts',
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF0F3B2C),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryGreen.withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Text(
-                                '4 New',
-                                style: TextStyle(
-                                  color: AppColors.primaryGreen,
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.bold,
+                            GestureDetector(
+                              onTap: () => Navigator.pop(context),
+                              child: Container(
+                                padding: const EdgeInsets.all(5),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.06),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close_rounded,
+                                  color: Color(0xFF475569),
+                                  size: 18,
                                 ),
                               ),
                             ),
                           ],
                         ),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            padding: const EdgeInsets.all(5),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.06),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.close_rounded,
-                              color: Color(0xFF475569),
-                              size: 18,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Divider(
-                    color: AppColors.primaryGreen.withOpacity(0.12),
-                    height: 1,
-                  ),
+                      ),
+                      const SizedBox(height: 10),
+                      Divider(
+                        color: AppColors.primaryGreen.withOpacity(0.12),
+                        height: 1,
+                      ),
 
-                  // Glassmorphic White Translucent Notification Cards
-                  Expanded(
-                    child: ListView(
-                      physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
-                      children: [
-                        _buildGlassNotificationCard(
-                          title: 'Housefull Winner #1234!',
-                          message:
-                              'Congratulations Winner 1 on winning ₹100 prize.',
-                          time: '12m ago',
-                          icon: Icons.emoji_events_rounded,
-                          iconColor: AppColors.primaryGreen,
-                        ),
-                        _buildGlassNotificationCard(
-                          title: 'Live Tambola Draw Starting',
-                          message:
-                              'Game #1235 is live now! Join before round starts.',
-                          time: '45m ago',
-                          icon: Icons.play_circle_fill_rounded,
-                          iconColor: const Color(0xFF00B894),
-                        ),
-                        _buildGlassNotificationCard(
-                          title: 'Wallet Recharged',
-                          message:
-                              '₹1,000.00 was successfully added to your account.',
-                          time: 'Yesterday',
-                          icon: Icons.account_balance_wallet_rounded,
-                          iconColor: AppColors.primaryGreen,
-                        ),
-                        _buildGlassNotificationCard(
-                          title: 'Ticket #001 Purchased',
-                          message: 'Confirmed for 25/09/2023 draw at 07:00 PM.',
-                          time: '2 days ago',
-                          icon: Icons.confirmation_number_rounded,
-                          iconColor: const Color(0xFF00B894),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                      // Dynamic Notification List or Empty State
+                      Expanded(
+                        child: notifications.isEmpty
+                            ? Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24.0),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(16),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primaryGreen
+                                              .withOpacity(0.08),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.notifications_none_rounded,
+                                          size: 40,
+                                          color: AppColors.primaryGreen,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 14),
+                                      const Text(
+                                        'No Notifications Yet',
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF0F3B2C),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'You will receive instant alerts about wallet top-ups, ticket confirmations, and admin approvals here.',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey.shade600,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : ListView.builder(
+                                physics: const BouncingScrollPhysics(),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 12),
+                                itemCount: notifications.length,
+                                itemBuilder: (context, index) {
+                                  final notif = notifications[index];
+                                  return _buildGlassNotificationCard(
+                                    notification: notif,
+                                    onTap: () {
+                                      if (!notif.isRead && notif.id != null) {
+                                        walletProv
+                                            .markNotificationAsRead(notif.id);
+                                      }
+                                    },
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -674,84 +744,162 @@ class _GaGaAppHeaderState extends State<GaGaAppHeader> {
   }
 
   static Widget _buildGlassNotificationCard({
-    required String title,
-    required String message,
-    required String time,
-    required IconData icon,
-    required Color iconColor,
+    required UserNotificationModel notification,
+    required VoidCallback onTap,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(13),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.78),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(
-          color: AppColors.primaryGreen.withOpacity(0.16),
-          width: 1.0,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primaryGreen.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+    IconData icon = Icons.notifications_active_rounded;
+    Color iconColor = AppColors.primaryGreen;
+
+    if (notification.isRechargeApproved) {
+      icon = Icons.check_circle_rounded;
+      iconColor = AppColors.primaryGreen;
+    } else if (notification.isRechargeRejected) {
+      icon = Icons.cancel_rounded;
+      iconColor = const Color(0xFFDC2626);
+    } else if (notification.type == 'ticket_purchased') {
+      icon = Icons.confirmation_number_rounded;
+      iconColor = const Color(0xFF00B894);
+    } else if (notification.type == 'recharge_submitted') {
+      icon = Icons.hourglass_top_rounded;
+      iconColor = const Color(0xFFD97706);
+    } else if (notification.type == 'insufficient_funds') {
+      icon = Icons.warning_amber_rounded;
+      iconColor = const Color(0xFFDC2626);
+    }
+
+    final String timeStr = _formatNotificationTime(notification.createdAt);
+    final String? remarks = notification.metadata['remarks']?.toString();
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: notification.isRead
+              ? Colors.white.withOpacity(0.78)
+              : Colors.white,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(
+            color: notification.isRead
+                ? AppColors.primaryGreen.withOpacity(0.16)
+                : (notification.isRechargeRejected
+                    ? const Color(0xFFDC2626).withOpacity(0.4)
+                    : AppColors.primaryGreen.withOpacity(0.5)),
+            width: notification.isRead ? 1.0 : 1.4,
           ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(9),
-            decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.12),
-              shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: notification.isRead
+                  ? AppColors.primaryGreen.withOpacity(0.04)
+                  : AppColors.primaryGreen.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
-            child: Icon(icon, color: iconColor, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        title,
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: iconColor, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          notification.title,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: notification.isRead
+                                ? FontWeight.w600
+                                : FontWeight.bold,
+                            color: const Color(0xFF0F3B2C),
+                          ),
+                        ),
+                      ),
+                      Text(
+                        timeStr,
                         style: const TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F3B2C),
+                          fontSize: 11,
+                          color: AppColors.primaryGreen,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    notification.message,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: Color(0xFF334155),
+                      height: 1.35,
+                    ),
+                  ),
+                  if (notification.isRechargeRejected &&
+                      remarks != null &&
+                      remarks.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEE2E2),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFFCA5A5)),
+                      ),
+                      child: Text(
+                        'Remarks: $remarks',
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFB91C1C),
                         ),
                       ),
                     ),
-                    Text(
-                      time,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.primaryGreen,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
                   ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  message,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    color: Color(0xFF334155),
-                    height: 1.35,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            if (!notification.isRead) ...[
+              const SizedBox(width: 6),
+              Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: AppColors.primaryGreen,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
+  }
+
+  static String _formatNotificationTime(DateTime? dt) {
+    if (dt == null) return 'Recent';
+    final now = DateTime.now();
+    final difference = now.difference(dt);
+    if (difference.inMinutes < 1) return 'Just now';
+    if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
+    if (difference.inHours < 24) return '${difference.inHours}h ago';
+    if (difference.inDays < 7) return '${difference.inDays}d ago';
+    return '${dt.day}/${dt.month}';
   }
 
   /// Real-time search results bottom sheet for draws, tickets, and games

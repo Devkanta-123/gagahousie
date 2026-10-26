@@ -169,6 +169,7 @@ class ProfileTab extends StatelessWidget {
                     context,
                     Icons.notifications_none,
                     'Notifications',
+                    onTap: () => GaGaAppHeader.showNotificationSheet(context),
                   ),
                   _buildDivider(),
                   _buildProfileOption(

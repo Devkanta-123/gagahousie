@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/ticket_model.dart';
 import '../models/tambola_ticket_model.dart';
+import '../models/ticket_purchase_model.dart';
 import 'supabase_config.dart';
 import 'supabase_service.dart';
 
@@ -12,6 +13,7 @@ class TicketService {
 
   static const String ticketsTable = 'tickets';
   static const String tambolaTicketsTable = 'tambola_tickets';
+  static const String ticketPurchasesTable = 'ticket_purchases';
 
   /// Seed initial demo tickets for fallback / offline use
   static List<TicketModel> defaultInitialTickets() {
@@ -333,13 +335,25 @@ class TicketService {
 
     try {
       debugPrint('📥 [TAMBOLA] Fetching tickets for draw $ticketId...');
-      final response = await client
+      var response = await client
           .from(tambolaTicketsTable)
           .select()
           .eq('ticket_id', ticketId)
           .order('sl_no', ascending: true);
 
-      final List<dynamic> data = response as List<dynamic>;
+      var data = response as List<dynamic>;
+      if (data.isEmpty) {
+        final altId = ticketId.startsWith('#')
+            ? ticketId.substring(1).trim()
+            : '#$ticketId';
+        final altResponse = await client
+            .from(tambolaTicketsTable)
+            .select()
+            .eq('ticket_id', altId)
+            .order('sl_no', ascending: true);
+        data = altResponse as List<dynamic>;
+      }
+
       final result = data
           .map((item) =>
               TambolaTicketModel.fromJson(Map<String, dynamic>.from(item)))
@@ -440,6 +454,265 @@ class TicketService {
     } catch (e) {
       debugPrint('❌ [TAMBOLA DELETE ERROR] $e');
       return false;
+    }
+  }
+
+  /// Record a ticket purchase in public.ticket_purchases and update public.tambola_tickets to 'Sold Out'
+  Future<bool> recordTicketPurchase({
+    required dynamic userId,
+    required String userEmail,
+    required String userName,
+    required String ticketId,
+    required String ticketTitle,
+    required String drawDate,
+    required String drawTime,
+    required List<int> slNos,
+    required double pricePerTicket,
+    Map<int, List<List<int?>>>? ticketDataBySl,
+    Map<int, String>? serialNumberBySl,
+    Map<int, String>? uniqueCodeBySl,
+  }) async {
+    final client = this.client;
+    final now = DateTime.now();
+
+    // 1. Fetch current tambola tickets for this draw to ensure we have the exact 3x9 grid
+    final existingTambola = await fetchTambolaTickets(ticketId);
+    final Map<int, TambolaTicketModel> existingMap = {
+      for (final t in existingTambola) t.slNo: t
+    };
+
+    // 2. Prepare purchases payload
+    final List<Map<String, dynamic>> purchaseRows = [];
+    for (final slNo in slNos) {
+      final existing = existingMap[slNo];
+      final grid = ticketDataBySl?[slNo] ??
+          existing?.ticketData ??
+          List.generate(3, (_) => List<int?>.filled(9, null));
+      final sn = serialNumberBySl?[slNo] ??
+          existing?.serialNumber ??
+          'SN: TKT-${slNo.toString().padLeft(3, '0')}';
+      final code = uniqueCodeBySl?[slNo] ??
+          existing?.uniqueCode ??
+          'CODE: GH-$ticketId-SL$slNo';
+
+      purchaseRows.add({
+        'user_id': userId,
+        'user_email': userEmail,
+        'user_name': userName,
+        'ticket_id': ticketId,
+        'ticket_title': ticketTitle,
+        'draw_date': drawDate,
+        'draw_time': drawTime,
+        'sl_no': slNo,
+        'serial_number': sn,
+        'unique_code': code,
+        'ticket_data': grid,
+        'price': pricePerTicket,
+        'status': 'Booked',
+        'created_at': now.toIso8601String(),
+      });
+    }
+
+    if (client == null || !SupabaseConfig.isConfigured) {
+      debugPrint('ℹ️ [PURCHASE] Supabase not connected. Simulated local purchase.');
+      return true;
+    }
+
+    // 3. Insert into public.ticket_purchases
+    try {
+      debugPrint('💾 [PURCHASE] Inserting ${purchaseRows.length} purchase records into "$ticketPurchasesTable"...');
+      await client.from(ticketPurchasesTable).insert(purchaseRows);
+      debugPrint('✅ [PURCHASE] Inserted purchase records for user $userId');
+    } catch (e) {
+      debugPrint('⚠️ [PURCHASE INSERT NOTICE] $e');
+    }
+
+    // 4. Update public.tambola_tickets to 'Sold Out' and player_name = userName
+    try {
+      final cleanId = ticketId.startsWith('#') ? ticketId.substring(1).trim() : ticketId.trim();
+      for (final slNo in slNos) {
+        debugPrint('💾 [TAMBOLA UPDATE] Marking draw $cleanId SL #$slNo as Sold Out to $userName...');
+        await client
+            .from(tambolaTicketsTable)
+            .update({
+              'status': 'Sold Out',
+              'player_name': userName,
+            })
+            .eq('ticket_id', cleanId)
+            .eq('sl_no', slNo);
+
+        // Also update with '#' prefix if exists
+        await client
+            .from(tambolaTicketsTable)
+            .update({
+              'status': 'Sold Out',
+              'player_name': userName,
+            })
+            .eq('ticket_id', '#$cleanId')
+            .eq('sl_no', slNo);
+      }
+      debugPrint('✅ [TAMBOLA UPDATE] Successfully marked tickets as Sold Out in DB');
+    } catch (e) {
+      debugPrint('⚠️ [TAMBOLA UPDATE NOTICE] $e');
+    }
+
+    return true;
+  }
+
+  /// Fetch all tickets purchased by a specific user from public.ticket_purchases
+  Future<List<TicketPurchaseModel>> fetchPurchasedTicketsForUser(dynamic userId) async {
+    final client = this.client;
+    if (client == null || !SupabaseConfig.isConfigured || userId == null) {
+      return [];
+    }
+
+    try {
+      debugPrint('📥 [PURCHASES] Fetching tickets for user $userId from "$ticketPurchasesTable"...');
+      final response = await client
+          .from(ticketPurchasesTable)
+          .select()
+          .eq('user_id', userId)
+          .order('created_at', ascending: false);
+
+      final List<dynamic> data = response as List<dynamic>;
+      final list = data
+          .map((item) => TicketPurchaseModel.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+      debugPrint('✅ [PURCHASES] Loaded ${list.length} purchased tickets for user $userId');
+      return list;
+    } catch (e) {
+      debugPrint('⚠️ [FETCH PURCHASES ERROR] $e');
+      return [];
+    }
+  }
+
+  /// Fetch tickets purchased by a specific user for a specific draw
+  Future<List<TicketPurchaseModel>> fetchPurchasedTicketsForUserAndDraw(
+      dynamic userId, String ticketId) async {
+    final client = this.client;
+    if (client == null || !SupabaseConfig.isConfigured || userId == null) {
+      return [];
+    }
+
+    try {
+      final cleanId = ticketId.startsWith('#')
+          ? ticketId.substring(1).trim()
+          : ticketId.trim();
+      debugPrint(
+          '📥 [PURCHASES] Fetching tickets for user $userId for draw $cleanId...');
+      final response = await client
+          .from(ticketPurchasesTable)
+          .select()
+          .eq('user_id', userId)
+          .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
+          .order('sl_no', ascending: true);
+
+      final List<dynamic> data = response as List<dynamic>;
+      final list = data
+          .map((item) =>
+              TicketPurchaseModel.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+      debugPrint(
+          '✅ [PURCHASES] Loaded ${list.length} purchased tickets for user $userId for draw $cleanId');
+      return list;
+    } catch (e) {
+      debugPrint('⚠️ [FETCH PURCHASES FOR DRAW ERROR] $e');
+      return [];
+    }
+  }
+
+  /// Fetch all registered buyers who bought tickets for a specific draw
+  Future<List<TicketPurchaseModel>> fetchBuyersForDraw(String ticketId) async {
+    final client = this.client;
+    if (client == null || !SupabaseConfig.isConfigured) {
+      return [];
+    }
+
+    try {
+      final cleanId = ticketId.startsWith('#') ? ticketId.substring(1).trim() : ticketId.trim();
+      debugPrint('📥 [DRAW BUYERS] Fetching buyers for draw $ticketId ($cleanId)...');
+
+      // Fetch from ticket_purchases
+      var response = await client
+          .from(ticketPurchasesTable)
+          .select()
+          .eq('ticket_id', cleanId)
+          .order('sl_no', ascending: true);
+
+      var data = response as List<dynamic>;
+      if (data.isEmpty) {
+        final altResponse = await client
+            .from(ticketPurchasesTable)
+            .select()
+            .eq('ticket_id', '#$cleanId')
+            .order('sl_no', ascending: true);
+        data = altResponse as List<dynamic>;
+      }
+
+      if (data.isNotEmpty) {
+        return data
+            .map((item) =>
+                TicketPurchaseModel.fromJson(Map<String, dynamic>.from(item)))
+            .toList();
+      }
+
+      return [];
+    } catch (e) {
+      debugPrint('⚠️ [FETCH DRAW BUYERS ERROR] $e');
+      return [];
+    }
+  }
+
+  /// Fetch the set of SL numbers that are sold out for a draw
+  Future<Set<int>> fetchSoldOutSlNos(String ticketId) async {
+    final client = this.client;
+    if (client == null || !SupabaseConfig.isConfigured) {
+      return {};
+    }
+
+    try {
+      final cleanId = ticketId.startsWith('#')
+          ? ticketId.substring(1).trim()
+          : ticketId.trim();
+      final set = <int>{};
+
+      // 1. Check ticket_purchases table
+      try {
+        final purchasesResp = await client
+            .from(ticketPurchasesTable)
+            .select('sl_no')
+            .filter('ticket_id', 'in', '($cleanId,#$cleanId)');
+        for (final item in (purchasesResp as List<dynamic>)) {
+          final sl = item['sl_no'] is int
+              ? item['sl_no']
+              : int.tryParse(item['sl_no'].toString());
+          if (sl != null) set.add(sl);
+        }
+      } catch (_) {}
+
+      // 2. Check tambola_tickets table
+      try {
+        final response = await client
+            .from(tambolaTicketsTable)
+            .select('sl_no, status')
+            .filter('ticket_id', 'in', '($cleanId,#$cleanId)');
+
+        final data = response as List<dynamic>;
+        for (final item in data) {
+          final status = item['status']?.toString().toLowerCase() ?? '';
+          if (status == 'sold out' || status == 'booked') {
+            final sl = item['sl_no'] is int
+                ? item['sl_no']
+                : int.tryParse(item['sl_no'].toString());
+            if (sl != null) set.add(sl);
+          }
+        }
+      } catch (_) {}
+
+      return set;
+    } catch (e) {
+      debugPrint('⚠️ [FETCH SOLD SL NOS ERROR] $e');
+      return {};
     }
   }
 }

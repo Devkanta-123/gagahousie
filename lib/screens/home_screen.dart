@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../models/wallet_model.dart';
 import '../providers/auth_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../utils/constants.dart';
 import 'home_tab.dart';
 import 'tickets_tab.dart';
@@ -9,6 +12,8 @@ import 'results_tab.dart';
 import 'profile_tab.dart';
 import 'admin_home_tab.dart';
 import 'admin_tickets_tab.dart';
+import 'draw_page.dart';
+import 'wallet_page.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,6 +24,177 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  StreamSubscription<UserNotificationModel>? _alertSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initWallet();
+    });
+  }
+
+  void _initWallet() {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final wallet = Provider.of<WalletProvider>(context, listen: false);
+    final user = auth.currentUser;
+
+    if (user != null) {
+      wallet.initForUser(
+        userId: user.id,
+        userEmail: user.email,
+        isAdmin: user.isAdmin,
+      );
+    }
+
+    _alertSubscription?.cancel();
+    _alertSubscription = wallet.alertStream.listen((notification) {
+      if (!mounted) return;
+      _showRealTimeNotificationDialog(context, notification);
+    });
+  }
+
+  @override
+  void dispose() {
+    _alertSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _showRealTimeNotificationDialog(
+      BuildContext context, UserNotificationModel notification) {
+    final isApproved = notification.isRechargeApproved;
+    final isRejected = notification.isRechargeRejected;
+    final isDrawStarted = notification.type == 'draw_started' ||
+        notification.title.contains('Draw Started') ||
+        notification.title.contains('Housie Draw Started');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isDrawStarted
+                    ? const Color(0xFFF7971E).withOpacity(0.15)
+                    : (isApproved
+                        ? const Color(0xFF00B894).withOpacity(0.15)
+                        : (isRejected
+                            ? Colors.red.withOpacity(0.15)
+                            : Colors.blue.withOpacity(0.15))),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isDrawStarted
+                    ? Icons.play_circle_fill_rounded
+                    : (isApproved
+                        ? Icons.check_circle_rounded
+                        : (isRejected
+                            ? Icons.cancel_rounded
+                            : Icons.notifications_active_rounded)),
+                color: isDrawStarted
+                    ? const Color(0xFFF7971E)
+                    : (isApproved
+                        ? const Color(0xFF00B894)
+                        : (isRejected ? Colors.red : Colors.blue)),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                notification.title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF2C3E50),
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              notification.message,
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+            if (isRejected && notification.metadata['remarks'] != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.info_outline, color: Colors.red, size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Admin Remarks: ${notification.metadata['remarks']}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.red.shade900,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Dismiss'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (isDrawStarted) {
+                final tid =
+                    notification.metadata['ticket_id']?.toString() ?? '';
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        DrawPage(ticketId: tid.isNotEmpty ? tid : null),
+                  ),
+                );
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const WalletPage()),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isDrawStarted
+                  ? const Color(0xFFF7971E)
+                  : (isApproved
+                      ? const Color(0xFF00B894)
+                      : const Color(0xFF2C3E50)),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: Text(isDrawStarted ? 'View Live Draw' : 'View Wallet'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {

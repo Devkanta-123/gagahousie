@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/tambola_ticket_model.dart';
+import '../models/ticket_model.dart';
 import '../providers/ticket_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../screens/ticket_purchase_page.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
@@ -20,6 +21,7 @@ class TicketSelectionPage extends StatefulWidget {
 
 class _TicketSelectionPageState extends State<TicketSelectionPage> {
   final Set<int> _selectedSlNos = <int>{};
+  final Set<int> _soldOutSlNos = <int>{};
   bool _isLoading = true;
   List<Map<String, dynamic>> _fallbackTickets = [];
 
@@ -48,32 +50,18 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
 
     try {
       final provider = Provider.of<TicketProvider>(context, listen: false);
-      // Check cache first
-      final cached = provider.getCachedTambolaTickets(tid);
-      if (cached != null && cached.isNotEmpty) {
-        if (mounted) setState(() => _isLoading = false);
-        return;
-      }
-
-      // Fetch from Supabase
+      // Fetch fresh from Supabase to guarantee live sold out status is accurate
       final fetched = await provider.fetchTambolaTickets(tid);
       if (fetched.isEmpty && mounted) {
-        // If not found in DB either, initialize empty tickets for this draw
         setState(() {
-          _fallbackTickets = List.generate(
-            6,
-            (index) => TambolaTicketModel.empty(tid, index + 1).toSelectionMap(),
-          );
+          _fallbackTickets = [];
         });
       }
     } catch (e) {
       debugPrint('ℹ️ [SELECTION] Error loading tickets: $e');
       if (mounted) {
         setState(() {
-          _fallbackTickets = List.generate(
-            6,
-            (index) => TambolaTicketModel.empty(tid, index + 1).toSelectionMap(),
-          );
+          _fallbackTickets = [];
         });
       }
     } finally {
@@ -85,21 +73,57 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
 
   int get selectedCount => _selectedSlNos.length;
 
-  double get totalPrice {
-    final priceStr = (widget.ticket['price'] ?? '₹20')
+  /// Resolves the live TicketModel from DB provider
+  TicketModel? get _dbTicket {
+    final tid = _ticketId;
+    if (tid.isEmpty) return null;
+    try {
+      final provider = Provider.of<TicketProvider>(context, listen: false);
+      final clean = tid.replaceAll(RegExp(r'[\s\-_#]'), '').toLowerCase();
+      return provider.tickets.firstWhere(
+        (t) =>
+            t.ticketId == tid ||
+            t.ticketId.replaceAll(RegExp(r'[\s\-_#]'), '').toLowerCase() == clean,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Unit price per ticket directly pulled from DB
+  double get unitPrice {
+    final db = _dbTicket;
+    if (db != null) {
+      final clean = db.price
+          .replaceAll('₹', '')
+          .replaceAll('\$', '')
+          .replaceAll(',', '')
+          .trim();
+      final p = double.tryParse(clean);
+      if (p != null && p > 0) return p;
+    }
+    final priceStr = (widget.ticket['price'] ?? widget.ticket['ticket_price'] ?? '')
         .toString()
         .replaceAll('₹', '')
         .replaceAll('\$', '')
+        .replaceAll(',', '')
         .trim();
-    final price = double.tryParse(priceStr) ?? 20.0;
-    return price * selectedCount;
+    return double.tryParse(priceStr) ?? 20.0;
   }
 
+  /// Exact total price for selected tickets
+  double get totalPrice => unitPrice * selectedCount;
+
   bool isTicketSelectable(int slNo) {
+    // A sold out ticket can never be selected
+    if (_soldOutSlNos.contains(slNo)) {
+      return false;
+    }
+
     // Get all selected tickets sorted by SL number
     List<int> selectedSLs = _selectedSlNos.toList()..sort();
 
-    // If no tickets selected, all tickets are selectable
+    // If no tickets selected, all non-sold tickets are selectable
     if (selectedSLs.isEmpty) {
       return true;
     }
@@ -118,6 +142,9 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       if (slNo >= 1 && slNo <= 3) {
         if (selectedSLs.contains(slNo)) return true; // Already selected
         int nextInSequence = selectedSLs.last + 1;
+        while (nextInSequence <= 3 && _soldOutSlNos.contains(nextInSequence)) {
+          nextInSequence++;
+        }
         return slNo == nextInSequence;
       }
       return false; // Can't select from set 2
@@ -128,6 +155,9 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       if (slNo >= 4 && slNo <= 6) {
         if (selectedSLs.contains(slNo)) return true; // Already selected
         int nextInSequence = selectedSLs.last + 1;
+        while (nextInSequence <= 6 && _soldOutSlNos.contains(nextInSequence)) {
+          nextInSequence++;
+        }
         return slNo == nextInSequence;
       }
       return false; // Can't select from set 1
@@ -178,16 +208,30 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
         ? provider.getCachedTambolaTickets(_ticketId)
         : null;
 
+    _soldOutSlNos.clear();
     final List<Map<String, dynamic>> tambolaTickets = [];
     if (cached != null && cached.isNotEmpty) {
       for (final t in cached) {
         final map = t.toSelectionMap();
+        if (map['isSoldOut'] == true) {
+          _soldOutSlNos.add(t.slNo);
+          _selectedSlNos.remove(t.slNo);
+        }
         map['selected'] = _selectedSlNos.contains(t.slNo);
         tambolaTickets.add(map);
       }
     } else if (_fallbackTickets.isNotEmpty) {
       for (final t in _fallbackTickets) {
         final map = Map<String, dynamic>.from(t);
+        final bool isSold = (map['status']?.toString().toLowerCase() == 'sold out' ||
+            map['status']?.toString().toLowerCase() == 'booked' ||
+            map['isSoldOut'] == true);
+        map['isSoldOut'] = isSold;
+        if (isSold) {
+          final sl = map['slNo'] as int? ?? 1;
+          _soldOutSlNos.add(sl);
+          _selectedSlNos.remove(sl);
+        }
         map['selected'] = _selectedSlNos.contains(map['slNo']);
         tambolaTickets.add(map);
       }
@@ -217,7 +261,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
               subtitle:
                   '${widget.ticket['ticket'] ?? 'Ticket'} • Select Numbers',
               showBalance: true,
-              balance: 1000.0,
+              balance: Provider.of<WalletProvider>(context).balance,
               showRechargeButton: true,
             ),
             // Selection Info Banner
@@ -575,10 +619,10 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
   }
 
   Widget _buildTicketInfoCard() {
-    final price = widget.ticket['price']?.toString() ?? '₹20';
+    final price = '₹${unitPrice.toStringAsFixed(0)}';
     final id = _ticketId.isNotEmpty ? _ticketId : 'N/A';
-    final date = widget.ticket['date']?.toString() ?? 'N/A';
-    final status = widget.ticket['status']?.toString() ?? 'Active';
+    final date = _dbTicket?.drawDate ?? (widget.ticket['date']?.toString() ?? 'N/A');
+    final status = _dbTicket?.status ?? (widget.ticket['status']?.toString() ?? 'Active');
 
     return Container(
       decoration: BoxDecoration(
@@ -695,18 +739,35 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       }
     }
 
-    final playerName = ticket['playerName']?.toString() ?? 'Ticket #$slNo';
+    final bool isSoldOut = (ticket['isSoldOut'] == true) ||
+        (ticket['status']?.toString().toLowerCase() == 'sold out') ||
+        (ticket['status']?.toString().toLowerCase() == 'booked');
+    final rawPlayer = ticket['playerName']?.toString() ?? 'Ticket #$slNo';
+    final playerName = isSoldOut ? 'Sold Out ($rawPlayer)' : rawPlayer;
     final serialNumber = ticket['serialNumber']?.toString() ??
         'SN: TKT-${slNo.toString().padLeft(3, '0')}';
     final uniqueCode = ticket['uniqueCode']?.toString() ??
         'CODE: TC-$_ticketId-${slNo.toString().padLeft(3, '0')}';
 
     // Check if this ticket can be selected
-    bool canSelect = isTicketSelectable(slNo);
-    bool isDisabled = !canSelect && !isSelected;
+    bool canSelect = !isSoldOut && isTicketSelectable(slNo);
+    bool isDisabled = isSoldOut || (!canSelect && !isSelected);
 
     return GestureDetector(
       onTap: () {
+        if (isSoldOut) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Ticket SL #$slNo is already SOLD OUT!'),
+              backgroundColor: const Color(0xFFDC2626),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+          return;
+        }
         if (canSelect || isSelected) {
           setState(() {
             if (_selectedSlNos.contains(slNo)) {
@@ -720,19 +781,23 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: isDisabled
-              ? Colors.grey.withOpacity(0.08)
-              : (isSelected
-                  ? const Color(0xFF00B894).withOpacity(0.08)
-                  : Colors.white),
+          color: isSoldOut
+              ? const Color(0xFFFEF2F2)
+              : (isDisabled
+                  ? Colors.grey.withOpacity(0.08)
+                  : (isSelected
+                      ? const Color(0xFF00B894).withOpacity(0.08)
+                      : Colors.white)),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isSelected
-                ? const Color(0xFF00B894)
-                : (isDisabled
-                    ? Colors.grey.withOpacity(0.15)
-                    : Colors.grey.withOpacity(0.2)),
-            width: isSelected ? 2 : 1,
+            color: isSoldOut
+                ? const Color(0xFFFCA5A5)
+                : (isSelected
+                    ? const Color(0xFF00B894)
+                    : (isDisabled
+                        ? Colors.grey.withOpacity(0.15)
+                        : Colors.grey.withOpacity(0.2))),
+            width: (isSelected || isSoldOut) ? 1.5 : 1,
           ),
           boxShadow: isSelected
               ? [
@@ -757,18 +822,22 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     width: 28,
                     height: 28,
                     decoration: BoxDecoration(
-                      color: isSelected
-                          ? const Color(0xFF00B894)
-                          : (isDisabled
-                              ? Colors.grey.withOpacity(0.2)
-                              : const Color(0xFF00B894).withOpacity(0.15)),
+                      color: isSoldOut
+                          ? const Color(0xFFFEE2E2)
+                          : (isSelected
+                              ? const Color(0xFF00B894)
+                              : (isDisabled
+                                  ? Colors.grey.withOpacity(0.2)
+                                  : const Color(0xFF00B894).withOpacity(0.15))),
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(
-                        color: isSelected
-                            ? const Color(0xFF00B894)
-                            : (isDisabled
-                                ? Colors.grey.withOpacity(0.15)
-                                : const Color(0xFF00B894).withOpacity(0.3)),
+                        color: isSoldOut
+                            ? const Color(0xFFEF4444)
+                            : (isSelected
+                                ? const Color(0xFF00B894)
+                                : (isDisabled
+                                    ? Colors.grey.withOpacity(0.15)
+                                    : const Color(0xFF00B894).withOpacity(0.3))),
                         width: 1,
                       ),
                     ),
@@ -776,11 +845,13 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                       child: Text(
                         slNo.toString(),
                         style: TextStyle(
-                          color: isSelected
-                              ? Colors.white
-                              : (isDisabled
-                                  ? Colors.grey
-                                  : const Color(0xFF00B894)),
+                          color: isSoldOut
+                              ? const Color(0xFFDC2626)
+                              : (isSelected
+                                  ? Colors.white
+                                  : (isDisabled
+                                      ? Colors.grey
+                                      : const Color(0xFF00B894))),
                           fontWeight: FontWeight.bold,
                           fontSize: 12,
                         ),
@@ -788,47 +859,91 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Selection checkbox
-                  Container(
-                    width: 20,
-                    height: 20,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isSelected
-                          ? const Color(0xFF00B894)
-                          : (isDisabled
-                              ? Colors.grey.withOpacity(0.1)
-                              : Colors.transparent),
-                      border: Border.all(
+                  // Selection checkbox / Sold Out Lock
+                  if (isSoldOut)
+                    Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFFFEE2E2),
+                        border: Border.all(
+                            color: const Color(0xFFDC2626), width: 1.5),
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.lock_rounded,
+                          color: Color(0xFFDC2626),
+                          size: 11,
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
                         color: isSelected
                             ? const Color(0xFF00B894)
                             : (isDisabled
-                                ? Colors.grey.withOpacity(0.3)
-                                : Colors.grey.withOpacity(0.5)),
-                        width: 1.5,
+                                ? Colors.grey.withOpacity(0.1)
+                                : Colors.transparent),
+                        border: Border.all(
+                          color: isSelected
+                              ? const Color(0xFF00B894)
+                              : (isDisabled
+                                  ? Colors.grey.withOpacity(0.3)
+                                  : Colors.grey.withOpacity(0.5)),
+                          width: 1.5,
+                        ),
                       ),
+                      child: isSelected
+                          ? const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 12,
+                            )
+                          : null,
                     ),
-                    child: isSelected
-                        ? const Icon(
-                            Icons.check,
-                            color: Colors.white,
-                            size: 12,
-                          )
-                        : null,
-                  ),
                   const SizedBox(width: 8),
                   // Player Name
                   Expanded(
                     child: Text(
                       playerName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color:
-                            isDisabled ? Colors.grey : const Color(0xFF2C3E50),
+                        color: isSoldOut
+                            ? const Color(0xFFB91C1C)
+                            : (isDisabled
+                                ? Colors.grey
+                                : const Color(0xFF2C3E50)),
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
+                  if (isSoldOut) ...[
+                    Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 2.5),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDC2626),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'SOLD OUT',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                  ],
                   // Serial Number
                   Container(
                     padding:
@@ -1005,16 +1120,51 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
               child: ElevatedButton(
                 onPressed: selectedCount > 0
                     ? () {
-                        // Navigate to TicketPurchasePage
+                        final sortedSls = _selectedSlNos.toList()..sort();
+                        final ticketData = Map<String, String>.from(
+                          widget.ticket.map((k, v) =>
+                              MapEntry(k.toString(), v.toString())),
+                        );
+                        ticketData['price'] = '₹${unitPrice.toStringAsFixed(0)}';
+                        ticketData['selectedCount'] = selectedCount.toString();
+                        ticketData['totalPrice'] = totalPrice.toStringAsFixed(2);
+                        if (sortedSls.isNotEmpty) {
+                          ticketData['selectedSlNos'] = sortedSls.join(',');
+                        }
+
+                        final ticketProv =
+                            Provider.of<TicketProvider>(context, listen: false);
+                        final cachedTkts = _ticketId.isNotEmpty
+                            ? ticketProv.getCachedTambolaTickets(_ticketId)
+                            : null;
+                        final List<Map<String, dynamic>> chosenTambola = [];
+                        if (cachedTkts != null) {
+                          for (final t in cachedTkts) {
+                            if (sortedSls.contains(t.slNo)) {
+                              chosenTambola.add(t.toSelectionMap());
+                            }
+                          }
+                        } else {
+                          for (final t in _fallbackTickets) {
+                            final sl = t['slNo'] as int? ?? 0;
+                            if (sortedSls.contains(sl)) {
+                              chosenTambola.add(Map<String, dynamic>.from(t));
+                            }
+                          }
+                        }
+
+                        // Navigate to TicketPurchasePage with exact selected details
                         Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => TicketPurchasePage(
-                              ticket: Map<String, String>.from(
-                                widget.ticket.map((k, v) =>
-                                    MapEntry(k.toString(), v.toString())),
-                              ),
+                              ticket: ticketData,
+                              selectedCount: selectedCount,
+                              selectedSlNos: sortedSls,
+                              unitPrice: unitPrice,
+                              totalAmount: totalPrice,
                               showBackButton: true,
+                              selectedTambolaTickets: chosenTambola,
                             ),
                           ),
                         );
@@ -1029,7 +1179,7 @@ class _TicketSelectionPageState extends State<TicketSelectionPage> {
                 ),
                 child: Text(
                   selectedCount > 0
-                      ? 'Buy Now ($selectedCount selected)'
+                      ? 'Buy Now ($selectedCount selected • ₹${totalPrice.toStringAsFixed(2)})'
                       : 'Select tickets to continue',
                   style: const TextStyle(
                     color: Colors.white,

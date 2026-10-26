@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/ticket_model.dart';
+import '../models/ticket_purchase_model.dart';
 import '../providers/ticket_provider.dart';
+import '../services/ticket_service.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 import 'admin_tambola_configurator_page.dart';
@@ -118,7 +120,7 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text(
-                            'Published Draw Tickets',
+                            'Published Tickets',
                             style: TextStyle(
                               color: AppColors.primaryGreen,
                               fontSize: 18,
@@ -669,6 +671,58 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                           ),
                         );
                       }),
+                      FutureBuilder<Set<int>>(
+                        future: TicketService.instance
+                            .fetchSoldOutSlNos(ticket.ticketId),
+                        builder: (context, snapshot) {
+                          final soldCount = snapshot.data?.length ?? 0;
+                          return InkWell(
+                            onTap: () => _showRegisteredBuyersBottomSheet(
+                                context, ticket),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              margin: const EdgeInsets.only(left: 6),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: soldCount > 0
+                                    ? const Color(0xFFEDE9FE)
+                                    : const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: soldCount > 0
+                                      ? const Color(0xFFC4B5FD)
+                                      : const Color(0xFFCBD5E1),
+                                  width: 0.6,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.people_alt_rounded,
+                                    size: 10.5,
+                                    color: soldCount > 0
+                                        ? const Color(0xFF6366F1)
+                                        : const Color(0xFF64748B),
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    '$soldCount Sold',
+                                    style: TextStyle(
+                                      color: soldCount > 0
+                                          ? const Color(0xFF6366F1)
+                                          : const Color(0xFF64748B),
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ],
@@ -878,6 +932,36 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                             Icons.edit_note_rounded,
                             size: 18,
                             color: AppColors.primaryGreen,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+
+                  // 4. View Registered Buyers & Sold Count
+                  Tooltip(
+                    message: 'View Registered Buyers',
+                    child: InkWell(
+                      onTap: () =>
+                          _showRegisteredBuyersBottomSheet(context, ticket),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 34,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6366F1).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: const Color(0xFF6366F1).withOpacity(0.4),
+                            width: 1,
+                          ),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.people_alt_rounded,
+                            size: 16,
+                            color: Color(0xFF6366F1),
                           ),
                         ),
                       ),
@@ -1264,11 +1348,382 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
     _showTicketModal(context);
   }
 
+  void _showRegisteredBuyersBottomSheet(
+      BuildContext context, TicketModel ticket) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Drag handle
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.only(top: 10, bottom: 8),
+                  width: 42,
+                  height: 4.5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+
+              // Title Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 16, 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF6366F1).withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(
+                                  Icons.people_alt_rounded,
+                                  color: Color(0xFF6366F1),
+                                  size: 18,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Registered Buyers',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF1E293B),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            'Draw #${ticket.ticketId} • ${ticket.ticketTitle}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 22),
+                      color: Colors.grey.shade700,
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Divider(height: 1),
+
+              // Body with FutureBuilder
+              Expanded(
+                child: FutureBuilder<List<TicketPurchaseModel>>(
+                  future: TicketService.instance
+                      .fetchBuyersForDraw(ticket.ticketId),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF6366F1),
+                        ),
+                      );
+                    }
+
+                    final buyers = snapshot.data ?? [];
+
+                    if (buyers.isEmpty) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade100,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.person_off_outlined,
+                                  size: 28,
+                                  color: Colors.grey.shade500,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'No Registered Buyers Yet',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF2C3E50),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'When players purchase SL tickets for this draw, they will appear here with their selected SL numbers and Tambola grids.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+
+                    // Group buyers by user_id or user_email/name
+                    final Map<String, List<TicketPurchaseModel>> grouped = {};
+                    for (final b in buyers) {
+                      final key = b.userId != 0
+                          ? b.userId.toString()
+                          : (b.userEmail.isNotEmpty
+                              ? b.userEmail
+                              : b.userName);
+                      grouped.putIfAbsent(key, () => []).add(b);
+                    }
+
+                    final totalTicketsSold = buyers.length;
+                    final totalRevenue = buyers.fold<double>(
+                        0.0, (sum, item) => sum + item.price);
+
+                    return Column(
+                      children: [
+                        // Quick Stats Strip
+                        Container(
+                          margin: const EdgeInsets.all(14),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: Colors.grey.shade200, width: 1),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              _buildBuyerStatItem(
+                                  'Total Buyers', '${grouped.length} Players'),
+                              Container(
+                                  width: 1,
+                                  height: 24,
+                                  color: Colors.grey.shade300),
+                              _buildBuyerStatItem(
+                                  'Tickets Sold', '$totalTicketsSold SLs'),
+                              Container(
+                                  width: 1,
+                                  height: 24,
+                                  color: Colors.grey.shade300),
+                              _buildBuyerStatItem('Total Pool',
+                                  '₹${totalRevenue.toStringAsFixed(0)}'),
+                            ],
+                          ),
+                        ),
+
+                        // Buyer Cards List
+                        Expanded(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            itemCount: grouped.keys.length,
+                            itemBuilder: (context, index) {
+                              final key = grouped.keys.elementAt(index);
+                              final userTickets = grouped[key]!;
+                              final first = userTickets.first;
+
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                      color: const Color(0xFF6366F1)
+                                          .withOpacity(0.2),
+                                      width: 1.1),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.03),
+                                      blurRadius: 6,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        // Avatar
+                                        CircleAvatar(
+                                          radius: 18,
+                                          backgroundColor:
+                                              const Color(0xFF6366F1)
+                                                  .withOpacity(0.12),
+                                          child: Text(
+                                            first.userName.isNotEmpty
+                                                ? first.userName[0].toUpperCase()
+                                                : 'P',
+                                            style: const TextStyle(
+                                              color: Color(0xFF6366F1),
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                first.userName,
+                                                style: const TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Color(0xFF1E293B),
+                                                ),
+                                              ),
+                                              if (first.userEmail.isNotEmpty)
+                                                Text(
+                                                  first.userEmail,
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: Colors.grey.shade600,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        // Count badge
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF6366F1)
+                                                .withOpacity(0.1),
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                          ),
+                                          child: Text(
+                                            '${userTickets.length} ${userTickets.length == 1 ? "Ticket" : "Tickets"}',
+                                            style: const TextStyle(
+                                              color: Color(0xFF6366F1),
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+
+                                    const SizedBox(height: 10),
+                                    const Divider(height: 1),
+                                    const SizedBox(height: 8),
+
+                                    // Booked SL Numbers Badges
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 4,
+                                      children: userTickets.map((t) {
+                                        return Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.primaryGreen
+                                                .withOpacity(0.12),
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                            border: Border.all(
+                                                color: AppColors.primaryGreen
+                                                    .withOpacity(0.3),
+                                                width: 0.8),
+                                          ),
+                                          child: Text(
+                                            'SL #${t.slNo} (${t.serialNumber})',
+                                            style: const TextStyle(
+                                              fontSize: 10.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: AppColors.primaryGreen,
+                                            ),
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBuyerStatItem(String label, String value) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 13.5,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1E293B),
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10.5,
+            color: Colors.grey.shade600,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+
   /// Opens the Start Housie Options Sheet with 3 Game Modes
   void _showStartHousieBottomSheet(BuildContext context, TicketModel ticket) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _StartHousieOptionsSheet(ticket: ticket),
     );
@@ -1284,230 +1739,254 @@ class _StartHousieOptionsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
+    final screenHeight = MediaQuery.of(context).size.height;
 
-    return Container(
-      padding: EdgeInsets.fromLTRB(20, 12, 20, 20 + bottomPadding),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Drag handle
-          Center(
-            child: Container(
-              width: 44,
-              height: 4.5,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ),
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: screenHeight * 0.92),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
-          const SizedBox(height: 14),
-
-          // Header
-          Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFF7971E), Color(0xFFFFD200)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+              // Sticky Drag Handle
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4.5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(3),
                   ),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFFF7971E).withOpacity(0.35),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.sports_esports_rounded,
-                  color: Colors.white,
-                  size: 24,
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Start Housie Draw',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF2C3E50),
+              const SizedBox(height: 8),
+
+              // Scrollable Options Content (Responsive for all screen sizes)
+              Flexible(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(16, 4, 16, 20 + bottomPadding),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Header
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(9),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFF7971E), Color(0xFFFFD200)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFFF7971E).withOpacity(0.35),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.sports_esports_rounded,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Start Housie Draw',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF2C3E50),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${ticket.ticketTitle} • ID: ${ticket.ticketId}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: Colors.grey.shade600,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.close_rounded, color: Colors.grey, size: 20),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${ticket.ticketTitle} • ID: ${ticket.ticketId}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
-                        fontWeight: FontWeight.w500,
+
+                      const SizedBox(height: 10),
+
+                      // Draw Details Card (Responsive Wrap)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00B894).withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: const Color(0xFF00B894).withOpacity(0.25),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.calendar_today_rounded,
+                                    size: 12, color: Color(0xFF00B894)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${ticket.drawDate} at ${ticket.drawTime}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0xFF00B894),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              'Prize Pool: ${ticket.totalPrize}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF2C3E50),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+
+                      const SizedBox(height: 14),
+
+                      const Text(
+                        'CHOOSE HOSTING MODE',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Option 1: System Auto with Pause Option
+                      _buildOptionCard(
+                        context,
+                        title: '1. System Auto',
+                        subtitle:
+                            'Automated number caller at timed intervals (3s–10s) with full Pause, Resume, and Skip controls.',
+                        icon: Icons.smart_toy_rounded,
+                        badge: 'AUTO TIMED',
+                        badgeColor: const Color(0xFF00B894),
+                        gradientColors: const [Color(0xFF00B894), Color(0xFF00CEC9)],
+                        tags: const ['⚡ Auto Interval', '⏸️ Play / Pause', '📢 Voice Calls'],
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AdminHousieGamePage(
+                                ticket: ticket,
+                                initialMode: HousieGameMode.systemAuto,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 9),
+
+                      // Option 2: Real Live with Video and Mic Features
+                      _buildOptionCard(
+                        context,
+                        title: '2. Real Live (Video & Mic)',
+                        subtitle:
+                            'Host live with real-time camera and microphone streaming so players can see and hear the host while numbers are drawn.',
+                        icon: Icons.videocam_rounded,
+                        badge: 'LIVE STREAM',
+                        badgeColor: const Color(0xFFE74C3C),
+                        gradientColors: const [Color(0xFFE74C3C), Color(0xFFFF7675)],
+                        tags: const [
+                          '🎥 Camera Feed',
+                          '🎙️ Live Mic',
+                          '🔄 Flip Camera',
+                          '🔴 Live HUD'
+                        ],
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AdminHousieGamePage(
+                                ticket: ticket,
+                                initialMode: HousieGameMode.realLive,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 9),
+
+                      // Option 3: Manual with Mark the Number
+                      _buildOptionCard(
+                        context,
+                        title: '3. Manual (Mark the Number)',
+                        subtitle:
+                            'Draw physical coins from your box or cage and tap numbers 1–90 on the master board to mark calls manually.',
+                        icon: Icons.touch_app_rounded,
+                        badge: 'MANUAL BOARD',
+                        badgeColor: const Color(0xFF3498DB),
+                        gradientColors: const [Color(0xFF2980B9), Color(0xFF3498DB)],
+                        tags: const [
+                          '✋ Touch 1-90 Grid',
+                          '🎲 Physical Draw',
+                          '↩️ Undo Support'
+                        ],
+                        onTap: () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AdminHousieGamePage(
+                                ticket: ticket,
+                                initialMode: HousieGameMode.manual,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              IconButton(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close_rounded, color: Colors.grey),
               ),
             ],
           ),
-
-          const SizedBox(height: 10),
-
-          // Draw Details Card
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00B894).withOpacity(0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: const Color(0xFF00B894).withOpacity(0.25),
-                width: 0.8,
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.calendar_today_rounded,
-                        size: 13, color: Color(0xFF00B894)),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${ticket.drawDate} at ${ticket.drawTime}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF00B894),
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                Text(
-                  'Prize Pool: ${ticket.totalPrize}',
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF2C3E50),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          const Text(
-            'CHOOSE HOSTING MODE',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey,
-              letterSpacing: 0.8,
-            ),
-          ),
-          const SizedBox(height: 10),
-
-          // Option 1: System Auto with Pause Option
-          _buildOptionCard(
-            context,
-            title: '1. System Auto',
-            subtitle:
-                'Automated number caller at timed intervals (3s–10s) with full Pause, Resume, and Skip controls.',
-            icon: Icons.smart_toy_rounded,
-            badge: 'AUTO TIMED',
-            badgeColor: const Color(0xFF00B894),
-            gradientColors: const [Color(0xFF00B894), Color(0xFF00CEC9)],
-            tags: const ['⚡ Auto Interval', '⏸️ Play / Pause', '📢 Slang Voice'],
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AdminHousieGamePage(
-                    ticket: ticket,
-                    initialMode: HousieGameMode.systemAuto,
-                  ),
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 10),
-
-          // Option 2: Real Live with Video and Mic Features
-          _buildOptionCard(
-            context,
-            title: '2. Real Live (Video & Mic)',
-            subtitle:
-                'Host live with real-time camera and microphone streaming so players can see and hear the host while numbers are drawn.',
-            icon: Icons.videocam_rounded,
-            badge: 'LIVE STREAM',
-            badgeColor: const Color(0xFFE74C3C),
-            gradientColors: const [Color(0xFFE74C3C), Color(0xFFFF7675)],
-            tags: const [
-              '🎥 Camera Feed',
-              '🎙️ Live Mic',
-              '🔄 Flip Camera',
-              '🔴 Live HUD'
-            ],
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AdminHousieGamePage(
-                    ticket: ticket,
-                    initialMode: HousieGameMode.realLive,
-                  ),
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 10),
-
-          // Option 3: Manual with Mark the Number
-          _buildOptionCard(
-            context,
-            title: '3. Manual (Mark the Number)',
-            subtitle:
-                'Draw physical coins from your box or cage and tap numbers 1–90 on the master board to mark calls manually.',
-            icon: Icons.touch_app_rounded,
-            badge: 'MANUAL BOARD',
-            badgeColor: const Color(0xFF3498DB),
-            gradientColors: const [Color(0xFF2980B9), Color(0xFF3498DB)],
-            tags: const [
-              '✋ Touch 1-90 Grid',
-              '🎲 Physical Draw',
-              '↩️ Undo Support'
-            ],
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AdminHousieGamePage(
-                    ticket: ticket,
-                    initialMode: HousieGameMode.manual,
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1525,18 +2004,18 @@ class _StartHousieOptionsSheet extends StatelessWidget {
   }) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: badgeColor.withOpacity(0.35), width: 1.2),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: badgeColor.withOpacity(0.35), width: 1.1),
           boxShadow: [
             BoxShadow(
-              color: badgeColor.withOpacity(0.08),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
+              color: badgeColor.withOpacity(0.07),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
@@ -1545,25 +2024,25 @@ class _StartHousieOptionsSheet extends StatelessWidget {
           children: [
             // Icon Badge
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: gradientColors,
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
                     color: gradientColors.first.withOpacity(0.35),
-                    blurRadius: 6,
+                    blurRadius: 5,
                     offset: const Offset(0, 2),
                   ),
                 ],
               ),
-              child: Icon(icon, color: Colors.white, size: 24),
+              child: Icon(icon, color: Colors.white, size: 21),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
 
             // Text Info
             Expanded(
@@ -1571,29 +2050,31 @@ class _StartHousieOptionsSheet extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF2C3E50),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF2C3E50),
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 6),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
+                            horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: badgeColor.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(8),
                           border: Border.all(
                               color: badgeColor.withOpacity(0.3), width: 0.8),
                         ),
                         child: Text(
                           badge,
                           style: TextStyle(
-                            fontSize: 9.5,
+                            fontSize: 9,
                             fontWeight: FontWeight.bold,
                             color: badgeColor,
                           ),
@@ -1601,33 +2082,33 @@ class _StartHousieOptionsSheet extends StatelessWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 3),
                   Text(
                     subtitle,
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 11,
                       color: Colors.grey.shade600,
-                      height: 1.3,
+                      height: 1.25,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
 
                   // Feature tags
                   Wrap(
-                    spacing: 5,
+                    spacing: 4,
                     runSpacing: 4,
                     children: tags.map((t) {
                       return Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
+                            horizontal: 5, vertical: 1.5),
                         decoration: BoxDecoration(
                           color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(6),
+                          borderRadius: BorderRadius.circular(5),
                         ),
                         child: Text(
                           t,
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 9.5,
                             color: Colors.grey.shade700,
                             fontWeight: FontWeight.w500,
                           ),

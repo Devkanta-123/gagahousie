@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/ticket_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/ticket_provider.dart';
+import '../providers/wallet_provider.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
-import 'admin_tickets_tab.dart';
+import 'admin_recharge_requests_page.dart';
 
 class AdminHomeTab extends StatelessWidget {
   const AdminHomeTab({super.key});
@@ -171,7 +171,133 @@ class AdminHomeTab extends StatelessWidget {
                         ],
                       ),
 
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 14),
+
+                      // User Wallet & Payment Approvals Banner
+                      Consumer<WalletProvider>(
+                        builder: (context, walletProv, _) {
+                          final pendingCount = walletProv.pendingAdminRecharges.length;
+                          return Container(
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: pendingCount > 0
+                                    ? const Color(0xFFD97706)
+                                    : AppColors.primaryGreen.withOpacity(0.3),
+                                width: pendingCount > 0 ? 1.4 : 1.0,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: pendingCount > 0
+                                      ? const Color(0xFFD97706).withOpacity(0.12)
+                                      : Colors.black.withOpacity(0.04),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              borderRadius: BorderRadius.circular(16),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(16),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const AdminRechargeRequestsPage(),
+                                    ),
+                                  );
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 12),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: BoxDecoration(
+                                          color: pendingCount > 0
+                                              ? const Color(0xFFD97706).withOpacity(0.12)
+                                              : AppColors.primaryGreen.withOpacity(0.1),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          Icons.account_balance_wallet_rounded,
+                                          color: pendingCount > 0
+                                              ? const Color(0xFFD97706)
+                                              : AppColors.primaryGreen,
+                                          size: 22,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            const Text(
+                                              'Recharge & Wallet Verification',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF1F2937),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              pendingCount > 0
+                                                  ? '$pendingCount pending approval${pendingCount > 1 ? "s" : ""} waiting'
+                                                  : 'All user top-ups verified & up-to-date',
+                                              style: TextStyle(
+                                                fontSize: 11.5,
+                                                fontWeight: pendingCount > 0
+                                                    ? FontWeight.w600
+                                                    : FontWeight.normal,
+                                                color: pendingCount > 0
+                                                    ? const Color(0xFFD97706)
+                                                    : Colors.grey.shade600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (pendingCount > 0)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 9, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFD97706),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          child: Text(
+                                            '$pendingCount NEW',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        )
+                                      else
+                                        const Icon(
+                                          Icons.chevron_right_rounded,
+                                          color: Colors.grey,
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+
+                      const SizedBox(height: 16),
 
                       // Recent Tickets Overview
                       Row(

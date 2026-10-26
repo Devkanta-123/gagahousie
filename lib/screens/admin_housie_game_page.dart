@@ -3,9 +3,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/ticket_model.dart';
 import '../models/tambola_ticket_model.dart';
 import '../services/ticket_service.dart';
+import '../services/wallet_service.dart';
+import '../services/supabase_service.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 
@@ -71,6 +74,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   bool _isVoiceEnabled = true;
   bool _isSpeaking = false;
   String? _lastAnnouncementText;
+  RealtimeChannel? _broadcastChannel;
 
   // Audio / Sound Wave Animation
   late AnimationController _pulseController;
@@ -176,6 +180,17 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     _activeMode = widget.initialMode;
     _remainingNumbers = List<int>.generate(90, (i) => i + 1)..shuffle();
 
+    if (widget.ticket.calledNumbers != null &&
+        widget.ticket.calledNumbers!.isNotEmpty) {
+      _calledNumbers.addAll(widget.ticket.calledNumbers!);
+      _drawHistory.addAll(widget.ticket.calledNumbers!.reversed);
+      _remainingNumbers.removeWhere((n) => _calledNumbers.contains(n));
+      _currentNumber = widget.ticket.currentNumber ??
+          (widget.ticket.calledNumbers!.isNotEmpty
+              ? widget.ticket.calledNumbers!.last
+              : null);
+    }
+
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -184,8 +199,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
+    _initBroadcastChannel();
     _loadTambolaTickets();
     _initTts();
+    _sendDrawStartedNotification();
 
     if (_activeMode == HousieGameMode.realLive) {
       _initCamera();
@@ -193,8 +210,194 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
   }
 
+  void _initBroadcastChannel() {
+    final client = SupabaseService.instance.client;
+    if (client == null) return;
+    try {
+      _broadcastChannel = client.channel('gaga_broadcast_feed');
+      _broadcastChannel?.onBroadcast(
+        event: 'prize_claimed',
+        callback: (payload) {
+          debugPrint('🏆 [ADMIN] Prize claimed event received: $payload');
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid = widget.ticket.ticketId.replaceAll('#', '').trim();
+          if (cleanTid.isNotEmpty && cleanTid != currentTid) return;
+
+          final pName = payload['prize_name'] ?? 'Prize';
+          final uName = payload['user_name'] ?? 'Player';
+          final sl = payload['sl_no']?.toString() ?? '';
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                backgroundColor: const Color(0xFF27AE60),
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 4),
+                content: Row(
+                  children: [
+                    const Icon(Icons.emoji_events, color: Colors.amber),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '🎉 $uName (SL #$sl) claimed $pName!',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          if (_isVoiceEnabled) {
+            _flutterTts.speak('Prize alert! $uName has claimed $pName!');
+          }
+        },
+      );
+      _broadcastChannel?.subscribe();
+    } catch (e) {
+      debugPrint('⚠️ [ADMIN BROADCAST CHANNEL ERROR] $e');
+    }
+  }
+
+  Future<void> _broadcastNumber(int number) async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && _broadcastChannel != null) {
+        await _broadcastChannel!.sendBroadcastMessage(
+          event: 'number_called',
+          payload: {
+            'ticket_id': widget.ticket.ticketId,
+            'number': number,
+            'called_numbers': _calledNumbers.toList(),
+            'current_number': number,
+            'announcement': _lastAnnouncementText,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ [BROADCAST NUMBER ERROR] $e');
+    }
+  }
+
+  Future<void> _broadcastUnmark(int number) async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && _broadcastChannel != null) {
+        await _broadcastChannel!.sendBroadcastMessage(
+          event: 'number_unmarked',
+          payload: {
+            'ticket_id': widget.ticket.ticketId,
+            'number': number,
+            'called_numbers': _calledNumbers.toList(),
+            'current_number': _currentNumber,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ [BROADCAST UNMARK ERROR] $e');
+    }
+  }
+
+  Future<void> _broadcastReset() async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && _broadcastChannel != null) {
+        await _broadcastChannel!.sendBroadcastMessage(
+          event: 'draw_reset',
+          payload: {
+            'ticket_id': widget.ticket.ticketId,
+            'called_numbers': <int>[],
+            'current_number': null,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ [BROADCAST RESET ERROR] $e');
+    }
+  }
+
+  Future<void> _syncDrawStateToDb() async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client == null) return;
+      final cleanId = widget.ticket.ticketId.startsWith('#')
+          ? widget.ticket.ticketId.substring(1).trim()
+          : widget.ticket.ticketId.trim();
+
+      await client.from('tickets').update({
+        'called_numbers': _calledNumbers.toList(),
+        'current_number': _currentNumber,
+      }).eq('ticket_id', cleanId);
+    } catch (e) {
+      debugPrint('⚠️ [SYNC DRAW STATE DB ERROR] $e');
+    }
+  }
+
+  /// Sends real-time notification & broadcast alert to all registered buyers of this draw
+  Future<void> _sendDrawStartedNotification() async {
+    try {
+      final ticketId = widget.ticket.ticketId;
+      final ticketTitle = widget.ticket.ticketTitle;
+      debugPrint(
+          '📢 [DRAW START NOTIFICATION] Fetching registered buyers for draw $ticketId...');
+
+      final buyers = await TicketService.instance.fetchBuyersForDraw(ticketId);
+      final Set<dynamic> buyerUserIds = buyers
+          .where((b) => b.userId != null && b.userId != 0)
+          .map((b) => b.userId)
+          .toSet();
+
+      debugPrint(
+          '📢 [DRAW START NOTIFICATION] Found ${buyerUserIds.length} buyers for draw $ticketId: $buyerUserIds');
+
+      final client = SupabaseService.instance.client;
+
+      // 1. Insert DB notification for each buyer in user_notifications table
+      for (final uid in buyerUserIds) {
+        await WalletService.instance.createNotification(
+          userId: uid,
+          title: '🎯 Housie Draw Started!',
+          message:
+              'The draw for $ticketTitle (Draw #$ticketId) has officially started! Check your numbers now.',
+          type: 'draw_started',
+          metadata: {
+            'ticket_id': ticketId,
+            'ticket_title': ticketTitle,
+            'mode': _activeMode.name,
+          },
+        );
+      }
+
+      // 2. Broadcast instant peer-to-peer WebSocket event across all connected clients
+      if (client != null) {
+        final broadcastChannel = client.channel('gaga_broadcast_feed');
+        await broadcastChannel.sendBroadcastMessage(
+          event: 'draw_started',
+          payload: {
+            'ticket_id': ticketId,
+            'ticket_title': ticketTitle,
+            'title': '🎯 Housie Draw Started!',
+            'message':
+                'The draw for $ticketTitle has officially started! Check your numbers now.',
+            'user_ids': buyerUserIds.map((id) => id.toString()).toList(),
+            'notification_id': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+        debugPrint(
+            '✅ [DRAW START NOTIFICATION] Realtime broadcast sent for draw $ticketId');
+      }
+    } catch (e) {
+      debugPrint('⚠️ [DRAW START NOTIFICATION ERROR] $e');
+    }
+  }
+
   @override
   void dispose() {
+    _broadcastChannel?.unsubscribe();
     _flutterTts.stop();
     _autoTimer?.cancel();
     _countdownTimer?.cancel();
@@ -303,19 +506,40 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     });
 
     try {
-      _availableCameras = await availableCameras();
+      if (_availableCameras.isEmpty) {
+        _availableCameras = await availableCameras();
+      }
       if (_availableCameras.isNotEmpty) {
+        // Default to back camera initially if not already explicitly selected
+        if (_cameraController == null && _selectedCameraIndex == 0) {
+          final backIdx = _availableCameras
+              .indexWhere((c) => c.lensDirection == CameraLensDirection.back);
+          if (backIdx != -1) {
+            _selectedCameraIndex = backIdx;
+          }
+        }
+
         final cam = _availableCameras[_selectedCameraIndex.clamp(
             0, _availableCameras.length - 1)];
+
+        final oldController = _cameraController;
+        _cameraController = null;
+        if (mounted) {
+          setState(() {
+            _isCameraReady = false;
+          });
+        }
+        await oldController?.dispose();
+
         final controller = CameraController(
           cam,
           ResolutionPreset.medium,
           enableAudio: _isMicActive,
+          imageFormatGroup: ImageFormatGroup.jpeg,
         );
         await controller.initialize();
         if (mounted) {
           setState(() {
-            _cameraController?.dispose();
             _cameraController = controller;
             _isCameraReady = true;
             _isCameraInitializing = false;
@@ -341,10 +565,113 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
   }
 
-  void _switchCamera() async {
-    if (_availableCameras.length < 2) return;
-    _selectedCameraIndex = (_selectedCameraIndex + 1) % _availableCameras.length;
-    await _initCamera();
+  Future<void> _switchCamera() async {
+    if (_isCameraInitializing) return;
+
+    try {
+      if (_availableCameras.isEmpty) {
+        _availableCameras = await availableCameras();
+      }
+      if (_availableCameras.length < 2) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Only 1 camera found on this device'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Determine current lens direction and find the opposite lens
+      final currentLens = _cameraController?.description.lensDirection ??
+          _availableCameras[_selectedCameraIndex.clamp(0, _availableCameras.length - 1)].lensDirection;
+      final oppositeLens = (currentLens == CameraLensDirection.back)
+          ? CameraLensDirection.front
+          : CameraLensDirection.back;
+
+      final targetCam = _availableCameras.firstWhere(
+        (c) => c.lensDirection == oppositeLens,
+        orElse: () => _availableCameras[(_selectedCameraIndex + 1) % _availableCameras.length],
+      );
+      final newIndex = _availableCameras.indexOf(targetCam);
+      _selectedCameraIndex = newIndex != -1 ? newIndex : 0;
+
+      if (mounted) {
+        setState(() {
+          _isCameraInitializing = true;
+        });
+      }
+
+      // 1. Try fast switch using setDescription
+      bool switched = false;
+      if (_cameraController != null && _cameraController!.value.isInitialized) {
+        try {
+          await _cameraController!.setDescription(targetCam);
+          switched = true;
+        } catch (e) {
+          debugPrint('📹 [setDescription fallback] $e');
+          switched = false;
+        }
+      }
+
+      // 2. Fallback to clean controller disposal and re-initialization
+      if (!switched) {
+        final oldController = _cameraController;
+        _cameraController = null;
+        if (mounted) {
+          setState(() {
+            _isCameraReady = false;
+          });
+        }
+        await oldController?.dispose();
+
+        final newController = CameraController(
+          targetCam,
+          ResolutionPreset.medium,
+          enableAudio: _isMicActive,
+          imageFormatGroup: ImageFormatGroup.jpeg,
+        );
+        await newController.initialize();
+        if (mounted) {
+          _cameraController = newController;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _isCameraReady = true;
+          _isCameraInitializing = false;
+        });
+
+        final lensName = targetCam.lensDirection == CameraLensDirection.front
+            ? 'Front Camera'
+            : 'Back Camera';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Switched to $lensName'),
+            duration: const Duration(seconds: 1),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('📹 [SWITCH CAMERA ERROR] $e');
+      if (mounted) {
+        setState(() {
+          _isCameraInitializing = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Camera flip error: $e'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   void _toggleMic() {
@@ -403,6 +730,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _countdown = _intervalSeconds;
     });
 
+    _broadcastNumber(next);
+    _syncDrawStateToDb();
+
     // Voice announcement for every new pick up
     _announceNumber(next);
   }
@@ -420,6 +750,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           _currentNumber = _drawHistory.isNotEmpty ? _drawHistory.first : null;
         }
       });
+      _broadcastUnmark(number);
+      _syncDrawStateToDb();
     } else {
       // Mark as called
       setState(() {
@@ -428,6 +760,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         _remainingNumbers.remove(number);
         _currentNumber = number;
       });
+
+      _broadcastNumber(number);
+      _syncDrawStateToDb();
 
       // Voice announcement for newly marked pick up
       _announceNumber(number);
@@ -443,6 +778,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _remainingNumbers.shuffle();
       _currentNumber = _drawHistory.isNotEmpty ? _drawHistory.first : null;
     });
+    _broadcastUnmark(last);
+    _syncDrawStateToDb();
   }
 
   void _resetGame() {
@@ -471,6 +808,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 _currentNumber = null;
                 _countdown = _intervalSeconds;
               });
+              _broadcastReset();
+              _syncDrawStateToDb();
             },
             child: const Text('Reset', style: TextStyle(color: Colors.white)),
           ),
@@ -704,7 +1043,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       borderRadius: BorderRadius.circular(10),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
         decoration: BoxDecoration(
           color: isSelected ? activeColor.withOpacity(0.12) : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
@@ -716,14 +1055,20 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 16, color: isSelected ? activeColor : Colors.grey),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                color: isSelected ? activeColor : Colors.grey.shade700,
+            Icon(icon, size: 15, color: isSelected ? activeColor : Colors.grey),
+            const SizedBox(width: 4),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                    color: isSelected ? activeColor : Colors.grey.shade700,
+                  ),
+                ),
               ),
             ),
           ],
@@ -738,7 +1083,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   Widget _buildVoiceAnnouncementBar() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: _isVoiceEnabled
             ? const Color(0xFF00B894).withOpacity(0.08)
@@ -778,31 +1123,35 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               children: [
                 Row(
                   children: [
-                    Text(
-                      _isVoiceEnabled
-                          ? 'Voice Announcement: ACTIVE'
-                          : 'Voice Announcement: MUTED',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: _isVoiceEnabled
-                            ? const Color(0xFF00B894)
-                            : Colors.grey.shade700,
+                    Flexible(
+                      child: Text(
+                        _isVoiceEnabled
+                            ? 'Voice Announcement: ACTIVE'
+                            : 'Voice Announcement: MUTED',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.bold,
+                          color: _isVoiceEnabled
+                              ? const Color(0xFF00B894)
+                              : Colors.grey.shade700,
+                        ),
                       ),
                     ),
                     if (_isSpeaking) ...[
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 1),
+                            horizontal: 4, vertical: 1),
                         decoration: BoxDecoration(
                           color: Colors.amber.shade700,
-                          borderRadius: BorderRadius.circular(6),
+                          borderRadius: BorderRadius.circular(5),
                         ),
                         child: const Text(
                           'SPEAKING...',
                           style: TextStyle(
-                            fontSize: 8.5,
+                            fontSize: 8,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
                           ),
@@ -820,7 +1169,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 9.5,
                     color: Colors.grey.shade600,
                   ),
                 ),
@@ -833,20 +1182,21 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               borderRadius: BorderRadius.circular(6),
               child: Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 decoration: BoxDecoration(
                   color: const Color(0xFF00B894).withOpacity(0.15),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: const [
                     Icon(Icons.replay_rounded,
                         size: 11, color: Color(0xFF00B894)),
-                    SizedBox(width: 3),
+                    SizedBox(width: 2),
                     Text(
                       'Replay',
                       style: TextStyle(
-                        fontSize: 10,
+                        fontSize: 9.5,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF00B894),
                       ),
@@ -855,10 +1205,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 ),
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 4),
           ],
           Transform.scale(
-            scale: 0.75,
+            scale: 0.72,
             child: Switch(
               value: _isVoiceEnabled,
               activeColor: const Color(0xFF00B894),
@@ -908,35 +1258,43 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.autorenew_rounded,
-                        color: Color(0xFF00E676), size: 14),
-                    const SizedBox(width: 4),
-                    Text(
-                      _isAutoRunning ? 'CALLING EVERY ${_intervalSeconds}S' : 'AUTO PAUSED',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
+              Flexible(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.autorenew_rounded,
+                          color: Color(0xFF00E676), size: 14),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          _isAutoRunning ? 'CALLING EVERY ${_intervalSeconds}S' : 'AUTO PAUSED',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
+              const SizedBox(width: 6),
               Text(
                 'Called: ${_calledNumbers.length}/90',
                 style: const TextStyle(
                   color: Colors.white70,
-                  fontSize: 12,
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -1038,7 +1396,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                     backgroundColor:
                         _isAutoRunning ? Colors.amber.shade700 : const Color(0xFF00B894),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -1046,12 +1404,15 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   icon: Icon(_isAutoRunning
                       ? Icons.pause_circle_rounded
                       : Icons.play_circle_fill_rounded),
-                  label: Text(
-                    _isAutoRunning
-                        ? 'Pause Auto ($_countdown s)'
-                        : 'Resume / Start Auto',
-                    style: const TextStyle(
-                        fontSize: 13.5, fontWeight: FontWeight.bold),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      _isAutoRunning
+                          ? 'Pause Auto ($_countdown s)'
+                          : 'Resume / Start Auto',
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ),
               ),
@@ -1065,15 +1426,18 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: Colors.white70, width: 1.2),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                   icon: const Icon(Icons.skip_next_rounded, size: 18),
-                  label: const Text(
-                    'Next Now',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  label: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'Next Now',
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ),
               ),
@@ -1167,46 +1531,55 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     // LIVE Pulsing Badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 9, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.85),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3.5),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.85),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 7,
+                              height: 7,
+                              decoration: const BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            'LIVE ${_formatLiveDuration(_liveElapsedSeconds)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.5,
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                'LIVE ${_formatLiveDuration(_liveElapsedSeconds)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 6),
 
                     // Quick Stream Toggles (Flip Camera, Mic, Video)
                     Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         _buildRoundLiveControl(
                           icon: _isMicActive ? Icons.mic : Icons.mic_off,
                           active: _isMicActive,
                           onTap: _toggleMic,
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 5),
                         _buildRoundLiveControl(
                           icon: _isVideoActive
                               ? Icons.videocam
@@ -1214,14 +1587,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                           active: _isVideoActive,
                           onTap: _toggleVideo,
                         ),
-                        if (_availableCameras.length > 1) ...[
-                          const SizedBox(width: 6),
-                          _buildRoundLiveControl(
-                            icon: Icons.flip_camera_ios_rounded,
-                            active: true,
-                            onTap: _switchCamera,
-                          ),
-                        ],
+                        const SizedBox(width: 5),
+                        _buildRoundLiveControl(
+                          icon: Icons.flip_camera_ios_rounded,
+                          active: true,
+                          onTap: _switchCamera,
+                        ),
                       ],
                     ),
                   ],
@@ -1231,14 +1602,14 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               // HUD: Bottom Floating Current Called Number
               Positioned(
                 bottom: 10,
-                left: 12,
-                right: 12,
+                left: 10,
+                right: 10,
                 child: Row(
                   children: [
                     // Large Live Number Overlay
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 6),
+                          horizontal: 12, vertical: 5),
                       decoration: BoxDecoration(
                         color: const Color(0xFF00B894).withOpacity(0.95),
                         borderRadius: BorderRadius.circular(14),
@@ -1251,28 +1622,29 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                         ],
                       ),
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           const Text(
                             'PICK UP',
                             style: TextStyle(
                               color: Colors.white,
-                              fontSize: 9.5,
+                              fontSize: 9,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           Text(
                             _currentNumber != null ? '$_currentNumber' : '--',
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 26,
+                              fontSize: 24,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
 
                     // Slang Tag with Voice Replay
                     if (_currentNumber != null)
@@ -1282,7 +1654,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                           borderRadius: BorderRadius.circular(10),
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 8),
+                                horizontal: 9, vertical: 7),
                             decoration: BoxDecoration(
                               color: Colors.black.withOpacity(0.75),
                               borderRadius: BorderRadius.circular(10),
@@ -1297,7 +1669,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                                       ? Icons.volume_up_rounded
                                       : Icons.record_voice_over_rounded,
                                   color: const Color(0xFFFFD54F),
-                                  size: 14,
+                                  size: 13,
                                 ),
                                 const SizedBox(width: 5),
                                 Expanded(
@@ -1307,7 +1679,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
                                       color: Color(0xFFFFD54F),
-                                      fontSize: 11,
+                                      fontSize: 10.5,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
@@ -1325,7 +1697,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
           // Host Action Panel below Video
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
             color: const Color(0xFF1E272C),
             child: Row(
               children: [
@@ -1335,23 +1707,26 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF00B894),
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    icon: const Icon(Icons.campaign_rounded, size: 20),
-                    label: const Text(
-                      'Announce & Draw Next',
-                      style:
-                          TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    icon: const Icon(Icons.campaign_rounded, size: 19),
+                    label: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'Announce & Draw Next',
+                        style: TextStyle(
+                            fontSize: 12.5, fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 IconButton(
                   onPressed: _undoLastNumber,
-                  icon: const Icon(Icons.undo_rounded, color: Colors.white70),
+                  icon: const Icon(Icons.undo_rounded, color: Colors.white70, size: 20),
                   tooltip: 'Undo Last Call',
                   style: IconButton.styleFrom(
                     backgroundColor: Colors.white.withOpacity(0.1),
@@ -1388,10 +1763,35 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       );
     }
 
-    if (_isCameraReady && _cameraController != null) {
-      return AspectRatio(
-        aspectRatio: _cameraController!.value.aspectRatio,
-        child: CameraPreview(_cameraController!),
+    if (_isCameraInitializing) {
+      return Container(
+        color: Colors.black,
+        child: const Center(
+          child: CircularProgressIndicator(
+            color: Color(0xFF00B894),
+            strokeWidth: 2.5,
+          ),
+        ),
+      );
+    }
+
+    if (_isCameraReady && _cameraController != null && _cameraController!.value.isInitialized) {
+      return ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.center,
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: _cameraController!.value.previewSize != null
+                  ? _cameraController!.value.previewSize!.height
+                  : 1,
+              height: _cameraController!.value.previewSize != null
+                  ? _cameraController!.value.previewSize!.width
+                  : 1,
+              child: CameraPreview(_cameraController!),
+            ),
+          ),
+        ),
       );
     }
 
@@ -1627,89 +2027,105 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
           const SizedBox(height: 12),
 
-          // Quick Number Input Row
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 44,
-                  child: TextField(
-                    controller: _manualInputController,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      hintText: 'Enter Number (1-90)',
-                      hintStyle: const TextStyle(fontSize: 12),
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 12),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide:
-                            BorderSide(color: Colors.grey.shade300, width: 1),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(
-                            color: Color(0xFF3498DB), width: 1.5),
+          // Quick Number Input Row (Responsive)
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 340;
+              return Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 42,
+                      child: TextField(
+                        controller: _manualInputController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          hintText:
+                              isNarrow ? 'No. (1-90)' : 'Enter Number (1-90)',
+                          hintStyle: const TextStyle(fontSize: 11),
+                          contentPadding:
+                              const EdgeInsets.symmetric(horizontal: 10),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(
+                                color: Colors.grey.shade300, width: 1),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(
+                                color: Color(0xFF3498DB), width: 1.5),
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: () {
-                  final val = int.tryParse(_manualInputController.text.trim());
-                  if (val != null && val >= 1 && val <= 90) {
-                    _markNumber(val);
-                    _manualInputController.clear();
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF3498DB),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                  const SizedBox(width: 6),
+                  ElevatedButton(
+                    onPressed: () {
+                      final val =
+                          int.tryParse(_manualInputController.text.trim());
+                      if (val != null && val >= 1 && val <= 90) {
+                        _markNumber(val);
+                        _manualInputController.clear();
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF3498DB),
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                          horizontal: isNarrow ? 10 : 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text('Mark',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 12)),
                   ),
-                ),
-                child: const Text('Mark',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(width: 6),
-              ElevatedButton.icon(
-                onPressed: _drawNextNumber,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00B894),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                  const SizedBox(width: 6),
+                  ElevatedButton.icon(
+                    onPressed: _drawNextNumber,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF00B894),
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                          horizontal: isNarrow ? 8 : 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    icon: const Icon(Icons.casino_rounded, size: 15),
+                    label: Text(
+                      isNarrow ? 'Draw' : 'Draw Coin',
+                      style: const TextStyle(
+                          fontSize: 11.5, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                ),
-                icon: const Icon(Icons.casino_rounded, size: 16),
-                label: const Text('Draw Coin',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-              ),
-            ],
+                ],
+              );
+            },
           ),
 
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
 
-          // Actions: Undo & Reset
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          // Actions: Undo & Reset (Responsive Wrap)
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 6,
+            runSpacing: 4,
             children: [
               TextButton.icon(
                 onPressed: _undoLastNumber,
-                icon: const Icon(Icons.undo_rounded, size: 16),
-                label: const Text('Undo Last Call'),
+                icon: const Icon(Icons.undo_rounded, size: 15),
+                label: const Text('Undo Last Call',
+                    style: TextStyle(fontSize: 11.5)),
               ),
-              const SizedBox(width: 8),
               TextButton.icon(
                 onPressed: _resetGame,
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
-                icon: const Icon(Icons.restart_alt_rounded, size: 16),
-                label: const Text('Reset Board'),
+                icon: const Icon(Icons.restart_alt_rounded, size: 15),
+                label: const Text('Reset Board',
+                    style: TextStyle(fontSize: 11.5)),
               ),
             ],
           ),
@@ -1879,13 +2295,16 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                         : null,
                   ),
                   child: Center(
-                    child: Text(
-                      '$number',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight:
-                            isCalled ? FontWeight.bold : FontWeight.w500,
-                        color: isCalled ? Colors.white : const Color(0xFF2F3542),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        '$number',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight:
+                              isCalled ? FontWeight.bold : FontWeight.w500,
+                          color: isCalled ? Colors.white : const Color(0xFF2F3542),
+                        ),
                       ),
                     ),
                   ),
@@ -1912,18 +2331,22 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
             children: [
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: const [
                   Icon(Icons.military_tech_rounded,
-                      color: Color(0xFFF39C12), size: 20),
-                  SizedBox(width: 6),
+                      color: Color(0xFFF39C12), size: 18),
+                  SizedBox(width: 5),
                   Text(
                     'Prize Tiers & Claims',
                     style: TextStyle(
-                      fontSize: 13.5,
+                      fontSize: 13,
                       fontWeight: FontWeight.bold,
                       color: Color(0xFF2C3E50),
                     ),
@@ -1931,25 +2354,26 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 ],
               ),
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   if (_isLoadingTickets)
                     const SizedBox(
-                      width: 14,
-                      height: 14,
+                      width: 13,
+                      height: 13,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   else
                     Text(
-                      '${_tambolaTickets.length} Tickets Loaded • ',
+                      '${_tambolaTickets.length} Tickets • ',
                       style: const TextStyle(
-                        fontSize: 10.5,
+                        fontSize: 10,
                         color: Colors.grey,
                       ),
                     ),
                   Text(
-                    'Total Pool: ${widget.ticket.totalPrize}',
+                    'Pool: ${widget.ticket.totalPrize}',
                     style: const TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.bold,
                       color: Color(0xFF00B894),
                     ),
@@ -1973,22 +2397,30 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.star_rounded,
-                          color: Color(0xFFF1C40F), size: 16),
-                      const SizedBox(width: 6),
-                      Text(
-                        prize.name,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF2C3E50),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        const Icon(Icons.star_rounded,
+                            color: Color(0xFFF1C40F), size: 16),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            prize.name,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF2C3E50),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         prize.price,
@@ -2101,7 +2533,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           children: [
             const Icon(Icons.emoji_events, color: Color(0xFFF39C12)),
             const SizedBox(width: 8),
-            Text('$prizeName Claims'),
+            Expanded(
+              child: Text(
+                '$prizeName Claims',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         content: winningTickets.isEmpty
