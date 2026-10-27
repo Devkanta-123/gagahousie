@@ -636,7 +636,7 @@ class TicketService {
       var response = await client
           .from(ticketPurchasesTable)
           .select()
-          .eq('ticket_id', cleanId)
+          .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId,ticket_id.ilike.%$cleanId%')
           .order('sl_no', ascending: true);
 
       var data = response as List<dynamic>;

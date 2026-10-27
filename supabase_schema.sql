@@ -488,7 +488,7 @@ CREATE TABLE IF NOT EXISTS public.user_notifications (
     user_id BIGINT NOT NULL REFERENCES public.user_auth(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     message TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('recharge_approved', 'recharge_rejected', 'ticket_purchased', 'insufficient_funds', 'recharge_submitted', 'general')),
+    type TEXT NOT NULL CHECK (type IN ('recharge_approved', 'recharge_rejected', 'ticket_purchased', 'insufficient_funds', 'recharge_submitted', 'draw_started', 'general')),
     is_read BOOLEAN NOT NULL DEFAULT false,
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL

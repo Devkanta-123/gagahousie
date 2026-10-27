@@ -6,6 +6,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/wallet_model.dart';
 import '../services/wallet_service.dart';
+import '../services/ticket_service.dart';
 import '../services/supabase_service.dart';
 
 /// Central State Provider for Wallet, Transactions, Recharges & Real-Time Alerts
@@ -162,7 +163,7 @@ class WalletProvider extends ChangeNotifier {
 
       _broadcastChannel!.onBroadcast(
         event: 'draw_started',
-        callback: (payload) {
+        callback: (payload) async {
           debugPrint('⚡ [BROADCAST DRAW STARTED] $payload');
           // STRICT RULE: Draw started notifications go ONLY to regular user side, NEVER to Admin host!
           if (_isAdmin) {
@@ -171,13 +172,51 @@ class WalletProvider extends ChangeNotifier {
             return;
           }
 
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final userIds = (payload['user_ids'] as List?)
+                  ?.map((e) => e.toString().trim())
+                  .toSet() ??
+              {};
+          final emails = (payload['buyer_emails'] as List?)
+                  ?.map((e) => e.toString().trim().toLowerCase())
+                  .toSet() ??
+              {};
+
+          // Check if this user bought a ticket for this draw!
+          final currentUserIdStr = _activeUserId?.toString().trim();
+          final currentUserEmail = _activeUserEmail?.trim().toLowerCase();
+
+          bool isBuyer = false;
+          if (currentUserIdStr != null && userIds.contains(currentUserIdStr)) {
+            isBuyer = true;
+          } else if (currentUserEmail != null && emails.contains(currentUserEmail)) {
+            isBuyer = true;
+          } else if (cleanTid.isNotEmpty && _activeUserId != null) {
+            try {
+              final purchases = await TicketService.instance
+                  .fetchPurchasedTicketsForUserAndDraw(_activeUserId, cleanTid);
+              if (purchases.isNotEmpty) {
+                isBuyer = true;
+              }
+            } catch (_) {}
+          }
+
+          // If buyers list is specified and current user is NOT a buyer, do not show alert
+          if (!isBuyer && (userIds.isNotEmpty || emails.isNotEmpty)) {
+            debugPrint(
+                'ℹ️ [DRAW STARTED FILTERED] User $_activeUserId is not a buyer for draw $cleanTid. Skipping alert.');
+            return;
+          }
+
+          final ticketTitle = payload['ticket_title']?.toString() ?? 'Housie';
           final notification = UserNotificationModel(
             id: payload['notification_id'] ??
                 DateTime.now().millisecondsSinceEpoch,
             userId: _activeUserId ?? 0,
             title: payload['title'] ?? '🎯 Housie Draw Started!',
             message: payload['message'] ??
-                'The draw has begun! Check your numbers now.',
+                'The draw for $ticketTitle has officially started! Check your numbers now.',
             type: 'draw_started',
             isRead: false,
             metadata: {

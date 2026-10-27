@@ -630,7 +630,20 @@ class WalletService {
         await client.from('user_notifications').insert(payload);
         return;
       } catch (e) {
-        debugPrint('ℹ️ [WALLET SERVICE] Error inserting notification: $e');
+        debugPrint('ℹ️ [WALLET SERVICE] Error inserting notification ($type): $e');
+        // Fallback for strict database check constraint on type
+        try {
+          final fallbackPayload = Map<String, dynamic>.from(payload);
+          fallbackPayload['type'] = 'general';
+          final meta = Map<String, dynamic>.from(fallbackPayload['metadata'] as Map? ?? {});
+          meta['original_type'] = type;
+          fallbackPayload['metadata'] = meta;
+          await client.from('user_notifications').insert(fallbackPayload);
+          debugPrint('✅ [WALLET SERVICE] Inserted notification using general fallback with original_type=$type');
+          return;
+        } catch (e2) {
+          debugPrint('ℹ️ [WALLET SERVICE] Fallback insert also failed: $e2');
+        }
       }
     }
 

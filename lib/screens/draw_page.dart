@@ -188,21 +188,44 @@ class _DrawPageState extends State<DrawPage>
       await _flutterTts.setLanguage('en-US');
       await _flutterTts.setSpeechRate(0.48);
       await _flutterTts.setVolume(1.0);
+      await _flutterTts.setPitch(1.0);
     } catch (e) {
       debugPrint('🎙️ [USER TTS INIT NOTICE] $e');
     }
   }
 
-  void _speakAnnouncement(int number, [String? customAnnouncement]) {
+  Future<void> _speakAnnouncement(int number, [String? customAnnouncement]) async {
     if (!_voiceEnabled) return;
     try {
       final slang = _tambolaSlang[number];
-      final text = customAnnouncement ??
-          (slang != null
-              ? 'Number $number! $slang, $number!'
-              : 'Number $number!');
-      _flutterTts.stop();
-      _flutterTts.speak(text);
+      final tens = number ~/ 10;
+      final units = number % 10;
+
+      String digitDetail;
+      if (number < 10) {
+        digitDetail = 'Single number $number';
+      } else {
+        const digitNames = [
+          'Zero', 'One', 'Two', 'Three', 'Four',
+          'Five', 'Six', 'Seven', 'Eight', 'Nine'
+        ];
+        digitDetail = '${digitNames[tens]} and ${digitNames[units]}, $number';
+      }
+
+      String text;
+      // Strictly guarantee audio announcement matches this exact called number!
+      if (customAnnouncement != null &&
+          customAnnouncement.isNotEmpty &&
+          customAnnouncement.contains('$number')) {
+        text = customAnnouncement;
+      } else {
+        text = slang != null && slang.isNotEmpty
+            ? 'Pick up number is $number! $digitDetail. $slang, $number!'
+            : 'Pick up number is $number! $digitDetail!';
+      }
+
+      await _flutterTts.stop();
+      await _flutterTts.speak(text);
     } catch (_) {}
   }
 
@@ -398,37 +421,33 @@ class _DrawPageState extends State<DrawPage>
 
           final num = int.tryParse(payload['number']?.toString() ?? '');
           final calledList = payload['called_numbers'];
-          final slang = payload['announcement']?.toString();
+          final announcement = payload['announcement']?.toString();
 
-          if (mounted) {
+          if (mounted && num != null && num > 0 && num <= 90) {
             setState(() {
-              if (num != null) {
-                _currentNumber = num;
-                _calledNumbers.add(num);
-                // Also auto-mark this called number on user tickets
-                for (int i = 0; i < _userPurchasedTickets.length; i++) {
-                  _userMarkedNumbers.putIfAbsent(i, () => <int>{});
-                  for (final row in _userPurchasedTickets[i].ticketData) {
-                    if (row.contains(num)) {
-                      _userMarkedNumbers[i]!.add(num);
-                    }
+              _currentNumber = num;
+              _calledNumbers.add(num);
+              _lastAnnouncement = _tambolaSlang[num];
+
+              // Also auto-mark this called number on user tickets
+              for (int i = 0; i < _userPurchasedTickets.length; i++) {
+                _userMarkedNumbers.putIfAbsent(i, () => <int>{});
+                for (final row in _userPurchasedTickets[i].ticketData) {
+                  if (row.contains(num)) {
+                    _userMarkedNumbers[i]!.add(num);
                   }
                 }
               }
+
               if (calledList is List) {
                 for (final item in calledList) {
                   final n = int.tryParse(item.toString());
                   if (n != null && n > 0) _calledNumbers.add(n);
                 }
               }
-              if (slang != null && slang.isNotEmpty) {
-                _lastAnnouncement = slang;
-              }
             });
 
-            if (num != null) {
-              _speakAnnouncement(num, slang);
-            }
+            _speakAnnouncement(num, announcement);
 
             // Check if any pattern is 1-away or ready to claim, and announce
             final analysis = _analyzeUserTickets();
@@ -634,6 +653,46 @@ class _DrawPageState extends State<DrawPage>
                 slNo: payload['sl_no']?.toString() ?? '',
               );
             }
+          }
+        },
+      );
+
+      // 6. Host officially started the draw
+      _broadcastChannel?.onBroadcast(
+        event: 'draw_started',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid =
+              _drawTicket?.ticketId.replaceAll('#', '').trim() ?? '';
+
+          if (cleanTid.isNotEmpty &&
+              currentTid.isNotEmpty &&
+              cleanTid != currentTid) {
+            return;
+          }
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: const [
+                    Icon(Icons.play_circle_fill_rounded,
+                        color: Colors.amberAccent),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '🎯 The host has officially started this draw! Best of luck!',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: const Color(0xFF1E3C72),
+                duration: const Duration(seconds: 4),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
           }
         },
       );
@@ -1576,7 +1635,7 @@ class _DrawPageState extends State<DrawPage>
       final alert = analysis.readyToClaim.first;
       final key = '${alert.slNo}_${alert.prize.name}_ready';
       if (_spokenAlertKeys.add(key)) {
-        Future.delayed(const Duration(milliseconds: 1400), () {
+        Future.delayed(const Duration(milliseconds: 3200), () {
           if (mounted && _voiceEnabled) {
             try {
               _flutterTts.speak(
@@ -1595,7 +1654,7 @@ class _DrawPageState extends State<DrawPage>
       final key =
           '${alert.slNo}_${alert.prizeName}_1away_${alert.missingNumber}';
       if (_spokenAlertKeys.add(key)) {
-        Future.delayed(const Duration(milliseconds: 1400), () {
+        Future.delayed(const Duration(milliseconds: 3200), () {
           if (mounted && _voiceEnabled) {
             try {
               if (alert.missingNumber > 0) {
@@ -2468,22 +2527,38 @@ class _DrawPageState extends State<DrawPage>
             ),
             const SizedBox(height: 12),
             if (slang != null)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '“$slang”',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontStyle: FontStyle.italic,
-                    fontWeight: FontWeight.w600,
+              InkWell(
+                onTap: () {
+                  if (_currentNumber != null) {
+                    _speakAnnouncement(_currentNumber!);
+                  }
+                },
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  textAlign: TextAlign.center,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.volume_up_rounded,
+                          color: Colors.white70, size: 14),
+                      const SizedBox(width: 4),
+                      Text(
+                        '“$slang”',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontStyle: FontStyle.italic,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
                 ),
               ),
           ] else ...[

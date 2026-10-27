@@ -312,6 +312,12 @@ class UserNotificationModel {
 
   bool get isRechargeApproved => type == 'recharge_approved';
   bool get isRechargeRejected => type == 'recharge_rejected';
+  bool get isDrawStarted =>
+      type == 'draw_started' ||
+      metadata['original_type'] == 'draw_started' ||
+      metadata['type'] == 'draw_started' ||
+      title.toLowerCase().contains('draw started') ||
+      title.toLowerCase().contains('housie draw');
 
   factory UserNotificationModel.fromJson(Map<String, dynamic> json) {
     Map<String, dynamic> meta = {};
@@ -325,12 +331,18 @@ class UserNotificationModel {
       }
     }
 
+    final rawType = json['type']?.toString() ?? 'general';
+    final effectiveType =
+        (rawType == 'general' && meta['original_type'] != null)
+            ? meta['original_type'].toString()
+            : rawType;
+
     return UserNotificationModel(
       id: json['id'],
       userId: json['user_id'],
       title: json['title'] ?? '',
       message: json['message'] ?? '',
-      type: json['type'] ?? 'general',
+      type: effectiveType,
       isRead: json['is_read'] == true,
       metadata: meta,
       createdAt: json['created_at'] != null

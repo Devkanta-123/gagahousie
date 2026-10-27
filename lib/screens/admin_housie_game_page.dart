@@ -42,6 +42,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   final List<int> _drawHistory = [];
   late List<int> _remainingNumbers;
   int? _currentNumber;
+  bool _hasSentStartNotification = false;
 
   // Auto Mode State
   bool _isAutoRunning = false;
@@ -193,6 +194,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           (widget.ticket.calledNumbers!.isNotEmpty
               ? widget.ticket.calledNumbers!.last
               : null);
+      _hasSentStartNotification = true;
     }
 
     _pulseController = AnimationController(
@@ -217,10 +219,6 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     _initBroadcastChannel();
     _loadTambolaTickets();
     _initTts();
-
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted) _sendDrawStartedNotification();
-    });
 
     if (_activeMode == HousieGameMode.realLive) {
       _initCamera();
@@ -273,9 +271,6 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _broadcastChannel?.subscribe((status, error) {
         debugPrint(
             '📡 [ADMIN BROADCAST STATUS] $status ${error != null ? "Error: $error" : ""}');
-        if (status == RealtimeSubscribeStatus.subscribed) {
-          _sendDrawStartedNotification();
-        }
       });
     } catch (e) {
       debugPrint('⚠️ [ADMIN BROADCAST CHANNEL ERROR] $e');
@@ -1022,9 +1017,13 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     );
   }
 
-  Future<void> _broadcastNumber(int number) async {
+  Future<void> _broadcastNumber(int number, {String? announcementText}) async {
     try {
       final client = SupabaseService.instance.client;
+      final announcement =
+          announcementText ?? _generateAnnouncementText(number);
+      _lastAnnouncementText = announcement;
+
       if (client != null && _broadcastChannel != null) {
         await _broadcastChannel!.sendBroadcastMessage(
           event: 'number_called',
@@ -1033,7 +1032,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             'number': number,
             'called_numbers': _calledNumbers.toList(),
             'current_number': number,
-            'announcement': _lastAnnouncementText,
+            'announcement': announcement,
             'timestamp': DateTime.now().millisecondsSinceEpoch,
           },
         );
@@ -1116,9 +1115,13 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           .where((b) => b.userId != null && b.userId != 0)
           .map((b) => b.userId)
           .toSet();
+      final Set<String> buyerEmails = buyers
+          .map((b) => b.userEmail.trim().toLowerCase())
+          .where((e) => e.isNotEmpty)
+          .toSet();
 
       debugPrint(
-          '📢 [DRAW START NOTIFICATION] Found ${buyerUserIds.length} buyers for draw $ticketId: $buyerUserIds');
+          '📢 [DRAW START NOTIFICATION] Found ${buyerUserIds.length} buyers for draw $ticketId: $buyerUserIds, emails: $buyerEmails');
 
       // 2. Insert DB notifications safely (ignoring any constraint or foreign key errors)
       for (final uid in buyerUserIds) {
@@ -1135,7 +1138,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               'mode': _activeMode.name,
             },
           );
-        } catch (_) {}
+        } catch (e) {
+          debugPrint('⚠️ [DB NOTIFICATION INSERT NOTICE for $uid] $e');
+        }
       }
 
       // 3. Broadcast instant peer-to-peer WebSocket event across gaga_broadcast_feed
@@ -1146,6 +1151,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         'message':
             'The draw for $ticketTitle has officially started! Check your numbers now.',
         'user_ids': buyerUserIds.map((id) => id.toString()).toList(),
+        'buyer_emails': buyerEmails.toList(),
         'notification_id': DateTime.now().millisecondsSinceEpoch,
       };
 
@@ -1499,16 +1505,19 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
 
     final next = _remainingNumbers.removeAt(0);
+    final text = _generateAnnouncementText(next);
     setState(() {
       _currentNumber = next;
       _calledNumbers.add(next);
       _drawHistory.insert(0, next);
+      _lastAnnouncementText = text;
       _countdown = _intervalSeconds;
     });
 
-    _broadcastNumber(next);
+    _broadcastNumber(next, announcementText: text);
     _syncDrawStateToDb();
-    if (_calledNumbers.length == 1) {
+    if (!_hasSentStartNotification) {
+      _hasSentStartNotification = true;
       _sendDrawStartedNotification();
     }
 
@@ -1527,22 +1536,28 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         _remainingNumbers.shuffle();
         if (_currentNumber == number) {
           _currentNumber = _drawHistory.isNotEmpty ? _drawHistory.first : null;
+          _lastAnnouncementText = _currentNumber != null
+              ? _generateAnnouncementText(_currentNumber!)
+              : null;
         }
       });
       _broadcastUnmark(number);
       _syncDrawStateToDb();
     } else {
       // Mark as called
+      final text = _generateAnnouncementText(number);
       setState(() {
         _calledNumbers.add(number);
         _drawHistory.insert(0, number);
         _remainingNumbers.remove(number);
         _currentNumber = number;
+        _lastAnnouncementText = text;
       });
 
-      _broadcastNumber(number);
+      _broadcastNumber(number, announcementText: text);
       _syncDrawStateToDb();
-      if (_calledNumbers.length == 1) {
+      if (!_hasSentStartNotification) {
+        _hasSentStartNotification = true;
         _sendDrawStartedNotification();
       }
 
@@ -1559,6 +1574,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _remainingNumbers.add(last);
       _remainingNumbers.shuffle();
       _currentNumber = _drawHistory.isNotEmpty ? _drawHistory.first : null;
+      _lastAnnouncementText = _currentNumber != null
+          ? _generateAnnouncementText(_currentNumber!)
+          : null;
     });
     _broadcastUnmark(last);
     _syncDrawStateToDb();
@@ -1588,9 +1606,11 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 _remainingNumbers =
                     List<int>.generate(90, (i) => i + 1)..shuffle();
                 _currentNumber = null;
+                _lastAnnouncementText = null;
                 _countdown = _intervalSeconds;
                 _pendingClaims.clear();
                 _awardedPrizes.clear();
+                _hasSentStartNotification = false;
               });
               _broadcastReset();
               _syncDrawStateToDb();
@@ -1624,6 +1644,11 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _isAutoRunning = true;
       _countdown = _intervalSeconds;
     });
+
+    if (!_hasSentStartNotification) {
+      _hasSentStartNotification = true;
+      _sendDrawStartedNotification();
+    }
 
     if (_currentNumber == null) {
       _drawNextNumber();
