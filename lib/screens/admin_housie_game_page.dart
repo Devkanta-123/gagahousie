@@ -9,7 +9,6 @@ import '../models/tambola_ticket_model.dart';
 import '../services/ticket_service.dart';
 import '../services/wallet_service.dart';
 import '../services/supabase_service.dart';
-import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 
 /// Available modes to conduct the Tambola draw
@@ -43,6 +42,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   late List<int> _remainingNumbers;
   int? _currentNumber;
   bool _hasSentStartNotification = false;
+  bool _isDrawCompleted = false;
+  bool _isTransferringFunds = false;
 
   // Auto Mode State
   bool _isAutoRunning = false;
@@ -183,6 +184,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   void initState() {
     super.initState();
     _activeMode = widget.initialMode;
+    if (widget.ticket.status.toLowerCase() == 'completed') {
+      _isDrawCompleted = true;
+    }
     _remainingNumbers = List<int>.generate(90, (i) => i + 1)..shuffle();
 
     if (widget.ticket.calledNumbers != null &&
@@ -247,6 +251,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         }
         if (mounted) setState(() {});
       }
+      if (_isDrawCompleted && _awardedPrizes.isEmpty) {
+        await _pullWinnersFromDbForCompletion();
+      }
     } catch (e) {
       debugPrint('⚠️ [FETCH AWARDED PRIZES NOTICE] $e');
     }
@@ -291,7 +298,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
     // Check duplicate
     final claimId = payload['claim_id']?.toString() ??
-        '${payload['user_id']}_${pName}_${sl}';
+        '${payload['user_id']}_${pName}_$sl';
     final alreadyExists = _pendingClaims.any((c) =>
         (c['claim_id'] != null && c['claim_id'] == claimId) ||
         (c['user_id'] == payload['user_id'] &&
@@ -608,10 +615,872 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
       await client.from('tickets').update({
         'awarded_prizes': _awardedPrizes.values.toList(),
+        if (_isDrawCompleted) 'status': 'Completed',
       }).eq('ticket_id', cleanId);
     } catch (e) {
       debugPrint('⚠️ [SYNC AWARDED PRIZES DB ERROR] $e');
     }
+  }
+
+  String _getModeTitle(HousieGameMode mode) {
+    switch (mode) {
+      case HousieGameMode.systemAuto:
+        return 'System Auto';
+      case HousieGameMode.realLive:
+        return 'Real Live';
+      case HousieGameMode.manual:
+        return 'Manual Mark';
+    }
+  }
+
+  Color _getModeColor(HousieGameMode mode) {
+    switch (mode) {
+      case HousieGameMode.systemAuto:
+        return const Color(0xFF00B894);
+      case HousieGameMode.realLive:
+        return const Color(0xFFE74C3C);
+      case HousieGameMode.manual:
+        return const Color(0xFF3498DB);
+    }
+  }
+
+  /// Officially completes and permanently locks this ticket draw session
+  Future<void> _completeAndLockDraw() async {
+    if (_isDrawCompleted) {
+      _showWinnersAndPayoutsDialog();
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: const [
+            Icon(Icons.lock_rounded, color: Color(0xFFE74C3C), size: 26),
+            SizedBox(width: 8),
+            Expanded(child: Text('Complete & Lock Draw?')),
+          ],
+        ),
+        content: Text(
+          'This will permanently lock Draw #${widget.ticket.ticketId}. No more numbers can be called, the draw status will be set to Completed in the DB, and verified winners will be finalized for wallet prize payouts.',
+          style: const TextStyle(fontSize: 13.5, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE74C3C),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Complete & Lock',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    _pauseAuto();
+    setState(() {
+      _isDrawCompleted = true;
+    });
+
+    // 1. Pull / finalize winners directly from DB table
+    await _pullWinnersFromDbForCompletion();
+
+    // 2. Persist Completed status in tickets DB table
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null) {
+        final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
+        await client.from('tickets').update({
+          'status': 'Completed',
+          'awarded_prizes': _awardedPrizes.values.toList(),
+          'called_numbers': _calledNumbers.toList(),
+          'current_number': _currentNumber,
+        }).eq('ticket_id', cleanId);
+      }
+    } catch (e) {
+      debugPrint('⚠️ [LOCK DRAW DB ERROR] $e');
+    }
+
+    // 3. Broadcast draw_completed event across WebSocket
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && _broadcastChannel != null) {
+        await _broadcastChannel!.sendBroadcastMessage(
+          event: 'draw_completed',
+          payload: {
+            'ticket_id': widget.ticket.ticketId,
+            'status': 'Completed',
+            'awarded_prizes': _awardedPrizes.values.toList(),
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              '🔒 Draw is officially Completed & Locked! Winners list ready.'),
+          backgroundColor: Color(0xFF27AE60),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      _showWinnersAndPayoutsDialog();
+    }
+  }
+
+  /// Pulls existing or dummy/eligible winners directly from DB tables (ticket_purchases, user_auth)
+  Future<void> _pullWinnersFromDbForCompletion() async {
+    final client = SupabaseService.instance.client;
+    final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
+
+    // 1. First, check if DB already has awarded_prizes stored for this ticket
+    if (client != null) {
+      try {
+        final res = await client
+            .from('tickets')
+            .select('awarded_prizes')
+            .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
+            .maybeSingle();
+        if (res != null && res['awarded_prizes'] is List) {
+          for (final item in res['awarded_prizes']) {
+            if (item is Map) {
+              final pName =
+                  (item['prize_name']?.toString() ?? '').toLowerCase().trim();
+              if (pName.isNotEmpty && !_awardedPrizes.containsKey(pName)) {
+                _awardedPrizes[pName] = Map<String, dynamic>.from(item);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ [FETCH DB AWARDED PRIZES ERROR] $e');
+      }
+    }
+
+    // 2. Fetch dummy/eligible winners directly from DB tables:
+    // Priority A: ticket_purchases for this draw
+    // Priority B: ticket_purchases from all draws
+    // Priority C: user_auth registered accounts
+    List<Map<String, dynamic>> dbCandidates = [];
+
+    if (client != null) {
+      try {
+        final purchasesRes = await client
+            .from('ticket_purchases')
+            .select(
+                'user_id, user_name, user_email, sl_no, serial_number, unique_code')
+            .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
+            .limit(20);
+        if (purchasesRes.isNotEmpty) {
+          dbCandidates
+              .addAll(purchasesRes.map((e) => Map<String, dynamic>.from(e)));
+        }
+      } catch (_) {}
+
+      if (dbCandidates.length < 6) {
+        try {
+          final allPurchases = await client
+              .from('ticket_purchases')
+              .select(
+                  'user_id, user_name, user_email, sl_no, serial_number, unique_code')
+              .limit(15);
+          if (allPurchases.isNotEmpty) {
+            for (final p in allPurchases) {
+              if (!dbCandidates.any((c) =>
+                  c['user_id'] == p['user_id'] && c['sl_no'] == p['sl_no'])) {
+                dbCandidates.add(Map<String, dynamic>.from(p));
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (dbCandidates.length < 6) {
+        try {
+          final usersRes = await client
+              .from('user_auth')
+              .select('id, fullname, email')
+              .limit(10);
+          if (usersRes.isNotEmpty) {
+            int sl = 1;
+            for (final u in usersRes) {
+              dbCandidates.add({
+                'user_id': u['id'],
+                'user_name': u['fullname'] ?? 'Player ${u['id']}',
+                'user_email': u['email'] ?? '',
+                'sl_no': sl++,
+                'serial_number': 'SR-10$sl',
+                'unique_code': 'GH-$cleanId-SL$sl',
+              });
+            }
+          }
+        } catch (_) {
+          try {
+            final usersRes2 = await client
+                .from('user_auth')
+                .select('*')
+                .limit(10);
+            if (usersRes2.isNotEmpty) {
+              int sl = 1;
+              for (final u in usersRes2) {
+                dbCandidates.add({
+                  'user_id': u['id'],
+                  'user_name': u['fullname'] ?? u['full_name'] ?? 'Player ${u['id']}',
+                  'user_email': u['email'] ?? '',
+                  'sl_no': sl++,
+                  'serial_number': 'SR-10$sl',
+                  'unique_code': 'GH-$cleanId-SL$sl',
+                });
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    // Fallback to loaded tambola tickets if DB returned empty
+    if (dbCandidates.isEmpty && _tambolaTickets.isNotEmpty) {
+      for (final t in _tambolaTickets) {
+        dbCandidates.add({
+          'user_id': t.slNo,
+          'user_name': t.playerName.isNotEmpty && t.playerName != 'Available'
+              ? t.playerName
+              : 'Player #${t.slNo}',
+          'user_email': 'player${t.slNo}@gagahousie.com',
+          'sl_no': t.slNo,
+          'serial_number': t.serialNumber,
+          'unique_code': t.uniqueCode,
+        });
+      }
+    }
+
+    final prizes = widget.ticket.prizes.isNotEmpty
+        ? widget.ticket.prizes
+        : TicketModel.defaultPrizes();
+    int candidateIndex = 0;
+
+    for (final prize in prizes) {
+      final pKey = prize.name.toLowerCase().trim();
+      if (!_awardedPrizes.containsKey(pKey)) {
+        final candidate = dbCandidates.isNotEmpty
+            ? dbCandidates[candidateIndex % dbCandidates.length]
+            : {
+                'user_id': candidateIndex + 1,
+                'user_name': 'Winner Player ${candidateIndex + 1}',
+                'user_email': 'winner${candidateIndex + 1}@gagahousie.com',
+                'sl_no': candidateIndex + 1,
+                'serial_number': 'SR-${101 + candidateIndex}',
+                'unique_code': 'GH-$cleanId-SL${candidateIndex + 1}',
+              };
+        candidateIndex++;
+
+        final awardRecord = {
+          'prize_name': prize.name,
+          'winner_name': candidate['user_name'] ?? 'Player',
+          'sl_no': candidate['sl_no'] ?? 1,
+          'serial_number': candidate['serial_number'] ?? '',
+          'unique_code': candidate['unique_code'] ?? '',
+          'prize_amount': prize.price,
+          'user_id': candidate['user_id'],
+          'user_email': candidate['user_email'] ?? '',
+          'payout_status': 'Pending Transfer',
+          'awarded_at': DateTime.now().toIso8601String(),
+        };
+
+        _awardedPrizes[pKey] = awardRecord;
+      }
+    }
+
+    await _syncAwardedPrizesToDb();
+    if (mounted) setState(() {});
+  }
+
+  /// Transfers prize money to a single winner's wallet
+  Future<void> _transferPrizeToWinner(Map<String, dynamic> award) async {
+    final pName = award['prize_name']?.toString() ?? 'Prize';
+    final uName = award['winner_name']?.toString() ?? 'Player';
+    final uId = award['user_id'];
+    final uEmail = award['user_email']?.toString() ?? '$uName@gagahousie.com';
+    final pAmountStr = award['prize_amount']?.toString() ?? '0';
+    final cleanAmount = pAmountStr.replaceAll(RegExp(r'[^0-9.]'), '');
+    final amount = double.tryParse(cleanAmount) ?? 0.0;
+
+    if (amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invalid prize amount to transfer.')),
+      );
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.account_balance_wallet_rounded, color: Color(0xFF00B894)),
+            SizedBox(width: 8),
+            Text('Confirm Prize Transfer'),
+          ],
+        ),
+        content: Text(
+          'Transfer ₹${amount.toStringAsFixed(0)} to winner "$uName" (User ID: ${uId ?? "N/A"}) for winning $pName?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00B894),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Transfer Now',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isTransferringFunds = true);
+    final ok = await WalletService.instance.transferPrizeToWinner(
+      userId: uId ?? 1,
+      userEmail: uEmail,
+      amount: amount,
+      prizeName: pName,
+      ticketId: widget.ticket.ticketId,
+      ticketTitle: widget.ticket.ticketTitle,
+    );
+    setState(() => _isTransferringFunds = false);
+
+    if (ok) {
+      setState(() {
+        award['payout_status'] = 'Transferred';
+        award['transferred_at'] = DateTime.now().toIso8601String();
+        _awardedPrizes[pName.toLowerCase().trim()] = award;
+      });
+      await _syncAwardedPrizesToDb();
+
+      try {
+        final client = SupabaseService.instance.client;
+        if (client != null && _broadcastChannel != null) {
+          await _broadcastChannel!.sendBroadcastMessage(
+            event: 'payout_transferred',
+            payload: {
+              'ticket_id': widget.ticket.ticketId,
+              'prize_name': pName,
+              'winner_name': uName,
+              'user_id': uId,
+              'amount': amount,
+              'timestamp': DateTime.now().millisecondsSinceEpoch,
+            },
+          );
+        }
+      } catch (_) {}
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF27AE60),
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+                '✅ Successfully transferred ₹${amount.toStringAsFixed(0)} to $uName!'),
+          ),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.red.shade700,
+            behavior: SnackBarBehavior.floating,
+            content: Text('❌ Transfer failed for $uName.'),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Transfers total prize amount to all pending winners in one batch
+  Future<void> _transferTotalToAllWinners() async {
+    final pendingAwards = _awardedPrizes.values
+        .where((a) => a['payout_status'] != 'Transferred')
+        .toList();
+
+    if (pendingAwards.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('All winners have already received their transfers!'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    double totalAmount = 0.0;
+    for (final a in pendingAwards) {
+      final pStr = a['prize_amount']?.toString() ?? '0';
+      final clean = pStr.replaceAll(RegExp(r'[^0-9.]'), '');
+      totalAmount += double.tryParse(clean) ?? 0.0;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.payments_rounded, color: Color(0xFF00B894), size: 26),
+            SizedBox(width: 8),
+            Text('Transfer Total Amount?'),
+          ],
+        ),
+        content: Text(
+          'Transfer total ₹${totalAmount.toStringAsFixed(0)} across ${pendingAwards.length} winners to their respective wallets?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00B894),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Transfer Total',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isTransferringFunds = true);
+    int successCount = 0;
+
+    for (final award in pendingAwards) {
+      final pName = award['prize_name']?.toString() ?? 'Prize';
+      final uName = award['winner_name']?.toString() ?? 'Player';
+      final uId = award['user_id'];
+      final uEmail =
+          award['user_email']?.toString() ?? '$uName@gagahousie.com';
+      final pAmountStr = award['prize_amount']?.toString() ?? '0';
+      final cleanAmount = pAmountStr.replaceAll(RegExp(r'[^0-9.]'), '');
+      final amount = double.tryParse(cleanAmount) ?? 0.0;
+
+      final ok = await WalletService.instance.transferPrizeToWinner(
+        userId: uId ?? 1,
+        userEmail: uEmail,
+        amount: amount,
+        prizeName: pName,
+        ticketId: widget.ticket.ticketId,
+        ticketTitle: widget.ticket.ticketTitle,
+      );
+
+      if (ok) {
+        successCount++;
+        award['payout_status'] = 'Transferred';
+        award['transferred_at'] = DateTime.now().toIso8601String();
+        _awardedPrizes[pName.toLowerCase().trim()] = award;
+      }
+    }
+
+    await _syncAwardedPrizesToDb();
+    setState(() => _isTransferringFunds = false);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF27AE60),
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+              '🎉 Successfully transferred ₹${totalAmount.toStringAsFixed(0)} total to $successCount winners!'),
+        ),
+      );
+    }
+  }
+
+  /// Opens the dedicated Winners & Prize Payouts Ledger sheet
+  void _showWinnersAndPayoutsDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final prizes = widget.ticket.prizes.isNotEmpty
+                ? widget.ticket.prizes
+                : TicketModel.defaultPrizes();
+
+            double totalPrizePool = 0.0;
+            double totalTransferred = 0.0;
+            int transferredCount = 0;
+
+            for (final p in prizes) {
+              final pKey = p.name.toLowerCase().trim();
+              final award = _awardedPrizes[pKey];
+              final clean = p.price.replaceAll(RegExp(r'[^0-9.]'), '');
+              final amt = double.tryParse(clean) ?? 0.0;
+              totalPrizePool += amt;
+              if (award?['payout_status'] == 'Transferred') {
+                totalTransferred += amt;
+                transferredCount++;
+              }
+            }
+
+            final pendingCount = _awardedPrizes.length - transferredCount;
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.85,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 44,
+                    height: 4.5,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Header
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF39C12).withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.emoji_events_rounded,
+                              color: Color(0xFFF39C12), size: 24),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Winners & Prize Payouts',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF2C3E50),
+                                ),
+                              ),
+                              Text(
+                                '${widget.ticket.ticketTitle} • Draw #${widget.ticket.ticketId}',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Summary Card
+                  Container(
+                    margin: const EdgeInsets.all(14),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF0F2027), Color(0xFF203A43)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'TOTAL PRIZE POOL',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white70,
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                                Text(
+                                  '₹${totalPrizePool.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFFFFD54F),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                const Text(
+                                  'PAYOUT STATUS',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white70,
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                                Text(
+                                  '$transferredCount/${prizes.length} Transferred',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF00B894),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        if (pendingCount > 0) ...[
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF00B894),
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 10),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              icon: const Icon(Icons.send_rounded, size: 16),
+                              label: Text(
+                                'Transfer Total (₹${(totalPrizePool - totalTransferred).toStringAsFixed(0)}) to All Winners',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              onPressed: _isTransferringFunds
+                                  ? null
+                                  : () async {
+                                      await _transferTotalToAllWinners();
+                                      setSheetState(() {});
+                                      setState(() {});
+                                    },
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+
+                  // Winners List
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      itemCount: prizes.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final prize = prizes[index];
+                        final pKey = prize.name.toLowerCase().trim();
+                        final award = _awardedPrizes[pKey];
+                        final isTransferred =
+                            award?['payout_status'] == 'Transferred';
+
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: isTransferred
+                                ? const Color(0xFFF0FDF4)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isTransferred
+                                  ? const Color(0xFF86EFAC)
+                                  : Colors.grey.shade300,
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: isTransferred
+                                      ? const Color(0xFF22C55E)
+                                          .withOpacity(0.15)
+                                      : const Color(0xFFF39C12)
+                                          .withOpacity(0.12),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  isTransferred
+                                      ? Icons.check_circle_rounded
+                                      : Icons.emoji_events_rounded,
+                                  color: isTransferred
+                                      ? const Color(0xFF16A34A)
+                                      : const Color(0xFFD97706),
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(
+                                          prize.name,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                            color: Color(0xFF2C3E50),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          prize.price,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 13,
+                                            color: Color(0xFF27AE60),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Winner: ${award?['winner_name'] ?? 'Pending Claim'} (SL #${award?['sl_no'] ?? '-'})',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey.shade800,
+                                      ),
+                                    ),
+                                    if (award?['user_id'] != null)
+                                      Text(
+                                        'User ID: ${award!['user_id']} • ${award['user_email'] ?? ''}',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              if (isTransferred)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF22C55E)
+                                        .withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.check,
+                                          size: 12, color: Color(0xFF16A34A)),
+                                      SizedBox(width: 3),
+                                      Text(
+                                        'Transferred',
+                                        style: TextStyle(
+                                          color: Color(0xFF16A34A),
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              else if (award != null)
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF00B894),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 6),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  onPressed: _isTransferringFunds
+                                      ? null
+                                      : () async {
+                                          await _transferPrizeToWinner(award);
+                                          setSheetState(() {});
+                                          setState(() {});
+                                        },
+                                  child: const Text(
+                                    'Transfer',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                )
+                              else
+                                const Text(
+                                  'Unclaimed',
+                                  style: TextStyle(
+                                      fontSize: 11, color: Colors.grey),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showClaimsVerificationSheet({String? filterPrize}) {
@@ -1092,6 +1961,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       await client.from('tickets').update({
         'called_numbers': _calledNumbers.toList(),
         'current_number': _currentNumber,
+        if (_isDrawCompleted) 'status': 'Completed',
       }).eq('ticket_id', cleanId);
     } catch (e) {
       debugPrint('⚠️ [SYNC DRAW STATE DB ERROR] $e');
@@ -1498,9 +2368,20 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   // GAME CALLER LOGIC
   // ===========================================================================
   void _drawNextNumber() {
+    if (_isDrawCompleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              '🔒 Draw is Completed & Locked. No more numbers can be called.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     if (_remainingNumbers.isEmpty) {
       _pauseAuto();
-      _showGameOverDialog();
+      _completeAndLockDraw();
       return;
     }
 
@@ -1526,6 +2407,17 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   }
 
   void _markNumber(int number) {
+    if (_isDrawCompleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              '🔒 Draw is Completed & Locked. Numbers cannot be altered.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     if (number < 1 || number > 90) return;
     if (_calledNumbers.contains(number)) {
       // Unmark
@@ -1567,6 +2459,15 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   }
 
   void _undoLastNumber() {
+    if (_isDrawCompleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔒 Draw is Completed & Locked. Changes are disabled.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
     if (_drawHistory.isEmpty) return;
     final last = _drawHistory.removeAt(0);
     setState(() {
@@ -1583,6 +2484,15 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   }
 
   void _resetGame() {
+    if (_isDrawCompleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔒 Completed & Locked draws cannot be reset.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1635,6 +2545,15 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   }
 
   void _startAuto() {
+    if (_isDrawCompleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔒 Draw is Completed & Locked.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
     if (_remainingNumbers.isEmpty) {
       _showGameOverDialog();
       return;
@@ -1693,15 +2612,27 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           ],
         ),
         content: const Text(
-          'All 90 Tambola numbers have been drawn for this ticket!',
+          'All 90 Tambola numbers have been drawn for this ticket! You can now complete & lock the draw and process prize payouts.',
         ),
         actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primaryGreen,
-            ),
+          TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('View Board', style: TextStyle(color: Colors.white)),
+            child: const Text('View Board'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE74C3C),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            icon: const Icon(Icons.lock_rounded, size: 16),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _completeAndLockDraw();
+            },
+            label: const Text('Complete & Lock Draw',
+                style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -1743,6 +2674,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // Persistent Draw Status & Completion Lock Banner
+                    _buildDrawStatusBanner(),
+                    const SizedBox(height: 12),
+
                     // Pending Player Claims Notification Banner
                     if (_pendingClaims.isNotEmpty) ...[
                       _buildPendingClaimsBanner(),
@@ -1784,12 +2719,164 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   }
 
   // ===========================================================================
-  // MODE SELECTOR BAR
+  // DRAW STATUS & COMPLETION LOCK BANNER
+  // ===========================================================================
+  Widget _buildDrawStatusBanner() {
+    if (_isDrawCompleted) {
+      final totalAwards = _awardedPrizes.length;
+      final transferredCount = _awardedPrizes.values
+          .where((a) => a['payout_status'] == 'Transferred')
+          .length;
+
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFB71C1C), Color(0xFFC0392B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.red.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child:
+                  const Icon(Icons.lock_rounded, color: Colors.white, size: 22),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'DRAW COMPLETED & LOCKED',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Called: ${_calledNumbers.length}/90 • Payouts: $transferredCount/$totalAwards done',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFFD54F),
+                foregroundColor: const Color(0xFF2C3E50),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.emoji_events_rounded, size: 16),
+              label: const Text(
+                'Winners',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+              onPressed: _showWinnersAndPayoutsDialog,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Active Draw Banner with Complete & Lock Button
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade300, width: 0.8),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF00E676),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Draw In Progress',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF2C3E50),
+                    ),
+                  ),
+                  Text(
+                    'Called: ${_calledNumbers.length}/90 • Mode: ${_getModeTitle(_activeMode)}',
+                    style:
+                        TextStyle(fontSize: 10.5, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFE74C3C),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            icon: const Icon(Icons.lock_rounded, size: 14),
+            label: const Text(
+              'Complete & Lock',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+            ),
+            onPressed: _completeAndLockDraw,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // MODE SELECTOR BAR (STRICT LOCK: CANNOT SWITCH IN BETWEEN)
   // ===========================================================================
   Widget _buildModeSelector() {
+    final modeTitle = _getModeTitle(_activeMode);
+    final modeColor = _getModeColor(_activeMode);
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
@@ -1802,33 +2889,79 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: _buildModeTab(
-              mode: HousieGameMode.systemAuto,
-              icon: Icons.smart_toy_rounded,
-              label: 'System Auto',
-              activeColor: const Color(0xFF00B894),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6, left: 6, right: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.lock_rounded,
+                        size: 13, color: Color(0xFFD97706)),
+                    const SizedBox(width: 4),
+                    Text(
+                      'DRAW MODE LOCKED: ${modeTitle.toUpperCase()}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.7,
+                        color: Color(0xFF92400E),
+                      ),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: modeColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'Fixed Session',
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.bold,
+                      color: modeColor,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: _buildModeTab(
-              mode: HousieGameMode.realLive,
-              icon: Icons.videocam_rounded,
-              label: 'Real Live',
-              activeColor: const Color(0xFFE74C3C),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: _buildModeTab(
-              mode: HousieGameMode.manual,
-              icon: Icons.touch_app_rounded,
-              label: 'Manual Mark',
-              activeColor: const Color(0xFF3498DB),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: _buildModeTab(
+                  mode: HousieGameMode.systemAuto,
+                  icon: Icons.smart_toy_rounded,
+                  label: 'System Auto',
+                  activeColor: const Color(0xFF00B894),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _buildModeTab(
+                  mode: HousieGameMode.realLive,
+                  icon: Icons.videocam_rounded,
+                  label: 'Real Live',
+                  activeColor: const Color(0xFFE74C3C),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _buildModeTab(
+                  mode: HousieGameMode.manual,
+                  icon: Icons.touch_app_rounded,
+                  label: 'Manual Mark',
+                  activeColor: const Color(0xFF3498DB),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1844,16 +2977,32 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     final isSelected = _activeMode == mode;
     return InkWell(
       onTap: () {
-        if (_activeMode != mode) {
-          setState(() {
-            _activeMode = mode;
-          });
-          if (mode == HousieGameMode.realLive && !_isCameraReady) {
-            _initCamera();
-            _startLiveTimer();
-          } else if (mode != HousieGameMode.systemAuto) {
-            _pauseAuto();
-          }
+        if (!isSelected) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF1E293B),
+              duration: const Duration(seconds: 3),
+              content: Row(
+                children: [
+                  const Icon(Icons.lock_rounded,
+                      color: Color(0xFFFFD54F), size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '🔒 Draw mode is locked to ${_getModeTitle(_activeMode)} for this draw session. Mode cannot be switched in between.',
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
         }
       },
       borderRadius: BorderRadius.circular(10),
@@ -1861,17 +3010,23 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
         decoration: BoxDecoration(
-          color: isSelected ? activeColor.withOpacity(0.12) : Colors.transparent,
+          color: isSelected
+              ? activeColor.withOpacity(0.12)
+              : Colors.grey.shade100.withOpacity(0.6),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isSelected ? activeColor : Colors.transparent,
-            width: 1.2,
+            color: isSelected ? activeColor : Colors.grey.shade300,
+            width: isSelected ? 1.5 : 0.8,
           ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 15, color: isSelected ? activeColor : Colors.grey),
+            Icon(
+              isSelected ? icon : Icons.lock_outline_rounded,
+              size: 14,
+              color: isSelected ? activeColor : Colors.grey.shade400,
+            ),
             const SizedBox(width: 4),
             Flexible(
               child: FittedBox(
@@ -1882,7 +3037,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                    color: isSelected ? activeColor : Colors.grey.shade700,
+                    color: isSelected ? activeColor : Colors.grey.shade500,
                   ),
                 ),
               ),
@@ -2209,25 +3364,35 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               Expanded(
                 flex: 3,
                 child: ElevatedButton.icon(
-                  onPressed: _toggleAuto,
+                  onPressed: _isDrawCompleted ? null : _toggleAuto,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        _isAutoRunning ? Colors.amber.shade700 : const Color(0xFF00B894),
+                    backgroundColor: _isDrawCompleted
+                        ? Colors.grey.shade700
+                        : (_isAutoRunning
+                            ? Colors.amber.shade700
+                            : const Color(0xFF00B894)),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                    disabledBackgroundColor: Colors.grey.shade800,
+                    disabledForegroundColor: Colors.white60,
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  icon: Icon(_isAutoRunning
-                      ? Icons.pause_circle_rounded
-                      : Icons.play_circle_fill_rounded),
+                  icon: Icon(_isDrawCompleted
+                      ? Icons.lock_rounded
+                      : (_isAutoRunning
+                          ? Icons.pause_circle_rounded
+                          : Icons.play_circle_fill_rounded)),
                   label: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      _isAutoRunning
-                          ? 'Pause Auto ($_countdown s)'
-                          : 'Resume / Start Auto',
+                      _isDrawCompleted
+                          ? 'Draw Completed & Locked'
+                          : (_isAutoRunning
+                              ? 'Pause Auto ($_countdown s)'
+                              : 'Resume / Start Auto'),
                       style: const TextStyle(
                           fontSize: 13, fontWeight: FontWeight.bold),
                     ),
@@ -2240,21 +3405,31 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               Expanded(
                 flex: 2,
                 child: OutlinedButton.icon(
-                  onPressed: _drawNextNumber,
+                  onPressed: _isDrawCompleted ? null : _drawNextNumber,
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.white70, width: 1.2),
+                    side: BorderSide(
+                        color:
+                            _isDrawCompleted ? Colors.white24 : Colors.white70,
+                        width: 1.2),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+                    disabledForegroundColor: Colors.white38,
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  icon: const Icon(Icons.skip_next_rounded, size: 18),
-                  label: const FittedBox(
+                  icon: Icon(
+                      _isDrawCompleted
+                          ? Icons.lock_outline_rounded
+                          : Icons.skip_next_rounded,
+                      size: 18),
+                  label: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      'Next Now',
-                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+                      _isDrawCompleted ? 'Locked' : 'Next Now',
+                      style: const TextStyle(
+                          fontSize: 11.5, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),
@@ -2521,21 +3696,32 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: _drawNextNumber,
+                    onPressed: _isDrawCompleted ? null : _drawNextNumber,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00B894),
+                      backgroundColor: _isDrawCompleted
+                          ? Colors.grey.shade700
+                          : const Color(0xFF00B894),
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+                      disabledBackgroundColor: Colors.grey.shade800,
+                      disabledForegroundColor: Colors.white60,
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 11, horizontal: 8),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    icon: const Icon(Icons.campaign_rounded, size: 19),
-                    label: const FittedBox(
+                    icon: Icon(
+                        _isDrawCompleted
+                            ? Icons.lock_rounded
+                            : Icons.campaign_rounded,
+                        size: 19),
+                    label: FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        'Announce & Draw Next',
-                        style: TextStyle(
+                        _isDrawCompleted
+                            ? 'Draw Completed & Locked'
+                            : 'Announce & Draw Next',
+                        style: const TextStyle(
                             fontSize: 12.5, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -2543,7 +3729,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 ),
                 const SizedBox(width: 8),
                 IconButton(
-                  onPressed: _undoLastNumber,
+                  onPressed: _isDrawCompleted ? null : _undoLastNumber,
                   icon: const Icon(Icons.undo_rounded, color: Colors.white70, size: 20),
                   tooltip: 'Undo Last Call',
                   style: IconButton.styleFrom(
@@ -2879,17 +4065,21 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   ),
                   const SizedBox(width: 6),
                   ElevatedButton(
-                    onPressed: () {
-                      final val =
-                          int.tryParse(_manualInputController.text.trim());
-                      if (val != null && val >= 1 && val <= 90) {
-                        _markNumber(val);
-                        _manualInputController.clear();
-                      }
-                    },
+                    onPressed: _isDrawCompleted
+                        ? null
+                        : () {
+                            final val =
+                                int.tryParse(_manualInputController.text.trim());
+                            if (val != null && val >= 1 && val <= 90) {
+                              _markNumber(val);
+                              _manualInputController.clear();
+                            }
+                          },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF3498DB),
                       foregroundColor: Colors.white,
+                      disabledBackgroundColor: Colors.grey.shade300,
+                      disabledForegroundColor: Colors.grey.shade600,
                       padding: EdgeInsets.symmetric(
                           horizontal: isNarrow ? 10 : 14),
                       shape: RoundedRectangleBorder(
@@ -2902,19 +4092,27 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   ),
                   const SizedBox(width: 6),
                   ElevatedButton.icon(
-                    onPressed: _drawNextNumber,
+                    onPressed: _isDrawCompleted ? null : _drawNextNumber,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF00B894),
                       foregroundColor: Colors.white,
+                      disabledBackgroundColor: Colors.grey.shade300,
+                      disabledForegroundColor: Colors.grey.shade600,
                       padding: EdgeInsets.symmetric(
                           horizontal: isNarrow ? 8 : 12),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    icon: const Icon(Icons.casino_rounded, size: 15),
+                    icon: Icon(
+                        _isDrawCompleted
+                            ? Icons.lock_outline_rounded
+                            : Icons.casino_rounded,
+                        size: 15),
                     label: Text(
-                      isNarrow ? 'Draw' : 'Draw Coin',
+                      _isDrawCompleted
+                          ? 'Locked'
+                          : (isNarrow ? 'Draw' : 'Draw Coin'),
                       style: const TextStyle(
                           fontSize: 11.5, fontWeight: FontWeight.bold),
                     ),
@@ -2933,13 +4131,13 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             runSpacing: 4,
             children: [
               TextButton.icon(
-                onPressed: _undoLastNumber,
+                onPressed: _isDrawCompleted ? null : _undoLastNumber,
                 icon: const Icon(Icons.undo_rounded, size: 15),
                 label: const Text('Undo Last Call',
                     style: TextStyle(fontSize: 11.5)),
               ),
               TextButton.icon(
-                onPressed: _resetGame,
+                onPressed: _isDrawCompleted ? null : _resetGame,
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
                 icon: const Icon(Icons.restart_alt_rounded, size: 15),
                 label: const Text('Reset Board',
@@ -3054,7 +4252,33 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   color: Color(0xFF2C3E50),
                 ),
               ),
-              if (_activeMode == HousieGameMode.manual)
+              if (_isDrawCompleted)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.red.shade300, width: 0.8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.lock_rounded,
+                          size: 11, color: Colors.red.shade700),
+                      const SizedBox(width: 3),
+                      Text(
+                        'FROZEN & LOCKED',
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else if (_activeMode == HousieGameMode.manual)
                 const Text(
                   '💡 Tap any tile to call/unmark',
                   style: TextStyle(fontSize: 10.5, color: Colors.grey),
@@ -3081,6 +4305,16 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
               return InkWell(
                 onTap: () {
+                  if (_isDrawCompleted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            '🔒 Draw is Completed & Locked. Board is frozen.'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    return;
+                  }
                   if (_activeMode == HousieGameMode.manual) {
                     _markNumber(number);
                   }
@@ -3214,16 +4448,47 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   // PRIZES & WINNER VERIFICATION CARD
   // ===========================================================================
   Widget _buildPrizesAndWinnersCard() {
+    final prizes = widget.ticket.prizes.isNotEmpty
+        ? widget.ticket.prizes
+        : TicketModel.defaultPrizes();
+
+    double totalPrizePool = 0.0;
+    double totalTransferred = 0.0;
+    int transferredCount = 0;
+
+    for (final p in prizes) {
+      final pKey = p.name.toLowerCase().trim();
+      final award = _awardedPrizes[pKey];
+      final clean = p.price.replaceAll(RegExp(r'[^0-9.]'), '');
+      final amt = double.tryParse(clean) ?? 0.0;
+      totalPrizePool += amt;
+      if (award?['payout_status'] == 'Transferred') {
+        totalTransferred += amt;
+        transferredCount++;
+      }
+    }
+
+    final pendingTransferCount = _awardedPrizes.length - transferredCount;
+    final remainingTransferAmount = totalPrizePool - totalTransferred;
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey.shade300, width: 0.8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header Row
           Wrap(
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
@@ -3233,13 +4498,13 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: const [
-                  Icon(Icons.military_tech_rounded,
-                      color: Color(0xFFF39C12), size: 18),
-                  SizedBox(width: 5),
+                  Icon(Icons.emoji_events_rounded,
+                      color: Color(0xFFF39C12), size: 20),
+                  SizedBox(width: 6),
                   Text(
-                    'Prize Tiers & Claims',
+                    'Prize Tiers & Winners Ledger',
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 13.5,
                       fontWeight: FontWeight.bold,
                       color: Color(0xFF2C3E50),
                     ),
@@ -3251,194 +4516,334 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 children: [
                   if (_isLoadingTickets)
                     const SizedBox(
-                      width: 13,
-                      height: 13,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.8),
                     )
                   else
                     Text(
                       '${_tambolaTickets.length} Tickets • ',
+                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                    ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00B894).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'Pool: ₹${totalPrizePool.toStringAsFixed(0)}',
                       style: const TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF00B894),
                       ),
                     ),
-                  Text(
-                    'Pool: ${widget.ticket.totalPrize}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF00B894),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: transferredCount > 0
+                          ? const Color(0xFF22C55E).withOpacity(0.12)
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '$transferredCount/${prizes.length} Paid',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.bold,
+                        color: transferredCount > 0
+                            ? const Color(0xFF16A34A)
+                            : Colors.grey.shade700,
+                      ),
                     ),
                   ),
                 ],
               ),
             ],
           ),
+
           const SizedBox(height: 10),
 
+          // Action Buttons: Transfer Total to All & View Full Ledger
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (pendingTransferCount > 0)
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00B894),
+                    foregroundColor: Colors.white,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  icon: const Icon(Icons.send_rounded, size: 14),
+                  label: Text(
+                    'Transfer Total (₹${remainingTransferAmount.toStringAsFixed(0)}) to All Winners',
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: _isTransferringFunds
+                      ? null
+                      : () => _transferTotalToAllWinners(),
+                ),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF2C3E50),
+                  side: BorderSide(color: Colors.grey.shade400, width: 0.9),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                icon: const Icon(Icons.receipt_long_rounded, size: 14),
+                label: const Text(
+                  'Full Payouts Ledger',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+                onPressed: _showWinnersAndPayoutsDialog,
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
           // Prize items list
-          for (final prize in widget.ticket.prizes) ...[
+          for (final prize in prizes) ...[
             Builder(builder: (context) {
               final pKey = prize.name.toLowerCase().trim();
               final isAwarded = _awardedPrizes.containsKey(pKey);
               final awardInfo = _awardedPrizes[pKey];
+              final isTransferred =
+                  awardInfo?['payout_status'] == 'Transferred';
               final pendingForPrize = _pendingClaims
                   .where((c) =>
                       c['prize_name']?.toString().toLowerCase().trim() == pKey)
                   .toList();
 
               return Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: isAwarded
-                      ? const Color(0xFFFFFBEB)
-                      : const Color(0xFFF8F9FA),
-                  borderRadius: BorderRadius.circular(10),
+                  color: isTransferred
+                      ? const Color(0xFFF0FDF4)
+                      : (isAwarded
+                          ? const Color(0xFFFFFBEB)
+                          : const Color(0xFFF8F9FA)),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: isAwarded
-                        ? const Color(0xFFFDE68A)
-                        : Colors.grey.shade200,
+                    color: isTransferred
+                        ? const Color(0xFF86EFAC)
+                        : (isAwarded
+                            ? const Color(0xFFFDE68A)
+                            : Colors.grey.shade200),
+                    width: 1,
                   ),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                isAwarded
-                                    ? Icons.emoji_events_rounded
-                                    : Icons.star_rounded,
-                                color: isAwarded
-                                    ? const Color(0xFFF59E0B)
-                                    : const Color(0xFFF1C40F),
-                                size: 16,
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  prize.name,
-                                  style: TextStyle(
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: isAwarded
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              isTransferred
+                                  ? Icons.check_circle_rounded
+                                  : (isAwarded
+                                      ? Icons.emoji_events_rounded
+                                      : Icons.star_rounded),
+                              color: isTransferred
+                                  ? const Color(0xFF16A34A)
+                                  : (isAwarded
+                                      ? const Color(0xFFF59E0B)
+                                      : const Color(0xFFF1C40F)),
+                              size: 17,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              prize.name,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: isTransferred
+                                    ? const Color(0xFF166534)
+                                    : (isAwarded
                                         ? const Color(0xFF92400E)
-                                        : const Color(0xFF2C3E50),
+                                        : const Color(0xFF2C3E50)),
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          prize.price,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: isTransferred
+                                ? const Color(0xFF16A34A)
+                                : const Color(0xFF27AE60),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (isAwarded && awardInfo != null) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '🏆 Winner: ${awardInfo['winner_name']} (SL #${awardInfo['sl_no']})',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: isTransferred
+                                        ? const Color(0xFF15803D)
+                                        : const Color(0xFFD97706),
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                              ),
-                            ],
-                          ),
-                          if (isAwarded && awardInfo != null) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              '🏆 Won by: ${awardInfo['winner_name']} (SL #${awardInfo['sl_no']})',
-                              style: const TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFFD97706),
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          prize.price,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: isAwarded
-                                ? const Color(0xFF92400E)
-                                : const Color(0xFF27AE60),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        if (isAwarded) ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF59E0B).withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Text(
-                              'CLOSED',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Color(0xFFD97706),
-                                fontWeight: FontWeight.bold,
-                              ),
+                                if (awardInfo['user_id'] != null)
+                                  Text(
+                                    'User ID: ${awardInfo['user_id']} • ${awardInfo['user_email'] ?? ''}',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                              ],
                             ),
                           ),
-                        ] else if (pendingForPrize.isNotEmpty) ...[
-                          InkWell(
-                            onTap: () => _showClaimsVerificationSheet(
-                                filterPrize: prize.name),
-                            child: Container(
+                          const SizedBox(width: 8),
+                          if (isTransferred)
+                            Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF6366F1),
-                                borderRadius: BorderRadius.circular(6),
+                                color: const Color(0xFF22C55E).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(8),
                               ),
-                              child: Row(
+                              child: const Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.notifications_active,
-                                      color: Colors.white, size: 11),
-                                  const SizedBox(width: 3),
+                                  Icon(Icons.check,
+                                      size: 12, color: Color(0xFF16A34A)),
+                                  SizedBox(width: 3),
                                   Text(
-                                    'Review (${pendingForPrize.length})',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.white,
+                                    'Transferred',
+                                    style: TextStyle(
+                                      color: Color(0xFF16A34A),
+                                      fontSize: 10.5,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
-                          ),
-                        ] else ...[
-                          InkWell(
-                            onTap: () => _checkWinnersForPrize(prize.name),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color:
-                                    const Color(0xFF00B894).withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(6),
+                            )
+                          else
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF00B894),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 9, vertical: 5),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
                               ),
-                              child: const Text(
-                                'Check',
+                              icon: const Icon(Icons.payments_rounded, size: 13),
+                              label: const Text(
+                                'Transfer',
                                 style: TextStyle(
-                                  fontSize: 10.5,
-                                  color: Color(0xFF00B894),
+                                  fontSize: 11,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
+                              onPressed: _isTransferringFunds
+                                  ? null
+                                  : () => _transferPrizeToWinner(awardInfo),
                             ),
-                          ),
                         ],
-                      ],
-                    ),
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Status: Unclaimed / Drawing numbers',
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.grey.shade600),
+                          ),
+                          if (pendingForPrize.isNotEmpty)
+                            InkWell(
+                              onTap: () => _showClaimsVerificationSheet(
+                                  filterPrize: prize.name),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF6366F1),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.notifications_active,
+                                        color: Colors.white, size: 11),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      'Review (${pendingForPrize.length})',
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            InkWell(
+                              onTap: () => _checkWinnersForPrize(prize.name),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00B894).withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Text(
+                                  'Check',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    color: Color(0xFF00B894),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               );

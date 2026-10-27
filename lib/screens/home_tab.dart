@@ -101,36 +101,14 @@ class _HomeTabState extends State<HomeTab> {
     }
   ];
 
-  final List<Map<String, dynamic>> winners = const [
-    {
-      'ticket': 'Ticket 1',
-      'date': '20/08/2023',
-      'time': '07:00 PM',
-      'prizes': [
-        {'name': 'Housefull', 'price': '₹50000', 'winner': '101'},
-        {'name': '1st Line', 'price': '₹3000', 'winner': '102'},
-        {'name': '2nd Line', 'price': '₹3000', 'winner': '103'},
-        {'name': '3rd Line', 'price': '₹3000', 'winner': '104'},
-        {'name': '4th Corner', 'price': '₹3000', 'winner': '105'},
-        {'name': 'Quick Five', 'price': '₹3000', 'winner': '106'},
-        {'name': '3 Ticket Quick', 'price': '₹10000', 'winner': '305,306,307'},
-      ]
-    },
-    {
-      'ticket': 'Ticket 2',
-      'date': '21/08/2023',
-      'time': '08:00 PM',
-      'prizes': [
-        {'name': 'Housefull', 'price': '₹60000', 'winner': '201'},
-        {'name': '1st Line', 'price': '₹4000', 'winner': '202'},
-        {'name': '2nd Line', 'price': '₹4000', 'winner': '203'},
-        {'name': '3rd Line', 'price': '₹4000', 'winner': '204'},
-        {'name': '4th Corner', 'price': '₹5000', 'winner': '205'},
-        {'name': 'Quick Five', 'price': '₹5000', 'winner': '206'},
-        {'name': '3 Ticket Quick', 'price': '₹15000', 'winner': '305,306,307'},
-      ]
+  List<Map<String, dynamic>> _getActiveRecentWinners() {
+    try {
+      final provider = Provider.of<TicketProvider>(context);
+      return provider.recentWinners;
+    } catch (_) {
+      return [];
     }
-  ];
+  }
 
   List<Map<String, dynamic>> _getActiveUpcomingTickets() {
     try {
@@ -939,8 +917,10 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  // RECENT WINNERS - Professional White & Green Theme
+  // RECENT WINNERS - Pulls real winners & user names directly from Supabase DB
   Widget _buildWinnersSection() {
+    final winnersList = _getActiveRecentWinners();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -973,18 +953,18 @@ class _HomeTabState extends State<HomeTab> {
                     width: 0.8,
                   ),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.emoji_events_rounded,
                       size: 12,
                       color: Color(0xFFF59E0B),
                     ),
-                    SizedBox(width: 3),
+                    const SizedBox(width: 3),
                     Text(
-                      'Live Winners',
-                      style: TextStyle(
+                      winnersList.isEmpty ? 'Live Winners' : '${winnersList.length} Draws',
+                      style: const TextStyle(
                         color: AppColors.primaryGreen,
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
@@ -996,7 +976,57 @@ class _HomeTabState extends State<HomeTab> {
             ],
           ),
         ),
-        Row(
+        if (winnersList.isEmpty)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: AppColors.primaryGreen.withOpacity(0.18),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primaryGreen.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Center(
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.emoji_events_outlined,
+                    color: AppColors.primaryGreen.withOpacity(0.5),
+                    size: 36,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'No Recent Winners Yet',
+                    style: TextStyle(
+                      color: Color(0xFF1F2937),
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Participate in live draws to win cash rewards!',
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 11.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          )
+        else ...[
+          Row(
           children: [
             GestureDetector(
               onTap: () {
@@ -1039,17 +1069,20 @@ class _HomeTabState extends State<HomeTab> {
             ),
             Expanded(
               child: SizedBox(
-                height: 155,
+                height: 175,
                 child: PageView.builder(
                   controller: _winnerPageController,
-                  itemCount: winners.length,
+                  itemCount: winnersList.length,
                   onPageChanged: (page) {
                     setState(() {
                       _currentWinnerPage = page;
                     });
                   },
                   itemBuilder: (context, index) {
-                    final ticket = winners[index];
+                    final ticket = winnersList[index];
+                    final prizesList = (ticket['prizes'] is List)
+                        ? ticket['prizes'] as List
+                        : [];
                     return Container(
                       margin: const EdgeInsets.symmetric(horizontal: 6),
                       padding: const EdgeInsets.symmetric(
@@ -1132,14 +1165,24 @@ class _HomeTabState extends State<HomeTab> {
                           ),
                           Expanded(
                             child: ListView.builder(
-                              physics: const NeverScrollableScrollPhysics(),
+                              physics: const BouncingScrollPhysics(),
                               padding: EdgeInsets.zero,
-                              itemCount: ticket['prizes'].length,
+                              itemCount: prizesList.length,
                               itemBuilder: (context, i) {
-                                final prize = ticket['prizes'][i];
+                                final prize = prizesList[i];
+                                final pName = prize['name']?.toString() ?? 'Prize';
+                                final pPrice = prize['price']?.toString() ?? '';
+                                final winnerName = prize['winner_name']?.toString() ??
+                                    prize['winner']?.toString() ??
+                                    'Player';
+                                final slNo = prize['sl_no']?.toString() ?? '';
+                                final displayWinner = slNo.isNotEmpty
+                                    ? '$winnerName (SL#$slNo)'
+                                    : winnerName;
+
                                 return Padding(
                                   padding: const EdgeInsets.symmetric(
-                                    vertical: 0.5,
+                                    vertical: 1.0,
                                   ),
                                   child: Row(
                                     mainAxisAlignment:
@@ -1148,15 +1191,18 @@ class _HomeTabState extends State<HomeTab> {
                                       Expanded(
                                         flex: 2,
                                         child: Text(
-                                          prize['name'],
+                                          pName,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(
                                             color: Color(0xFF2D4A3E),
                                             fontSize: 8.5,
+                                            fontWeight: FontWeight.w500,
                                           ),
                                         ),
                                       ),
                                       Text(
-                                        prize['price'],
+                                        pPrice,
                                         style: const TextStyle(
                                           color: AppColors.primaryGreen,
                                           fontWeight: FontWeight.bold,
@@ -1165,16 +1211,18 @@ class _HomeTabState extends State<HomeTab> {
                                       ),
                                       const SizedBox(width: 6),
                                       Expanded(
-                                        flex: 1,
+                                        flex: 2,
                                         child: Text(
-                                          "SL:${prize['winner']}",
+                                          displayWinner,
                                           style: TextStyle(
                                             color: AppColors.primaryGreen
-                                                .withOpacity(0.85),
-                                            fontSize: 7.5,
-                                            fontWeight: FontWeight.w500,
+                                                .withOpacity(0.95),
+                                            fontSize: 8,
+                                            fontWeight: FontWeight.bold,
                                           ),
                                           textAlign: TextAlign.right,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
                                     ],
@@ -1192,7 +1240,7 @@ class _HomeTabState extends State<HomeTab> {
             ),
             GestureDetector(
               onTap: () {
-                if (_currentWinnerPage < winners.length - 1) {
+                if (_currentWinnerPage < winnersList.length - 1) {
                   _winnerPageController.nextPage(
                     duration: const Duration(milliseconds: 300),
                     curve: Curves.easeInOut,
@@ -1207,7 +1255,7 @@ class _HomeTabState extends State<HomeTab> {
                   color: Colors.white,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: _currentWinnerPage < winners.length - 1
+                    color: _currentWinnerPage < winnersList.length - 1
                         ? AppColors.primaryGreen.withOpacity(0.3)
                         : AppColors.primaryGreen.withOpacity(0.12),
                     width: 1,
@@ -1222,7 +1270,7 @@ class _HomeTabState extends State<HomeTab> {
                 ),
                 child: Icon(
                   Icons.chevron_right_rounded,
-                  color: _currentWinnerPage < winners.length - 1
+                  color: _currentWinnerPage < winnersList.length - 1
                       ? AppColors.primaryGreen
                       : AppColors.primaryGreen.withOpacity(0.25),
                   size: 22,
@@ -1235,7 +1283,7 @@ class _HomeTabState extends State<HomeTab> {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(
-            winners.length,
+            winnersList.length,
             (index) => AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               margin: const EdgeInsets.symmetric(horizontal: 3),
@@ -1250,6 +1298,7 @@ class _HomeTabState extends State<HomeTab> {
             ),
           ),
         ),
+        ],
         const SizedBox(height: 18),
       ],
     );

@@ -48,6 +48,7 @@ class _DrawPageState extends State<DrawPage>
   final Map<String, Map<String, dynamic>> _awardedPrizes = {};
   final Set<String> _pendingUserClaims = {};
   final Set<String> _spokenAlertKeys = {};
+  bool _isDrawCompleted = false;
 
   // Real-time Subscriptions
   RealtimeChannel? _broadcastChannel;
@@ -319,7 +320,7 @@ class _DrawPageState extends State<DrawPage>
       if (client != null) {
         final res = await client
             .from('tickets')
-            .select('called_numbers, current_number, awarded_prizes')
+            .select('called_numbers, current_number, awarded_prizes, status')
             .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
             .maybeSingle();
 
@@ -327,6 +328,11 @@ class _DrawPageState extends State<DrawPage>
           final called = res['called_numbers'];
           final curr = res['current_number'];
           final awarded = res['awarded_prizes'];
+          final status = res['status']?.toString().toLowerCase() ?? '';
+          if (status == 'completed' ||
+              _drawTicket?.status.toLowerCase() == 'completed') {
+            _isDrawCompleted = true;
+          }
           if (curr != null) {
             _currentNumber = int.tryParse(curr.toString());
           }
@@ -697,6 +703,78 @@ class _DrawPageState extends State<DrawPage>
         },
       );
 
+      // 7. Host officially completed and locked the draw
+      _broadcastChannel?.onBroadcast(
+        event: 'draw_completed',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid =
+              _drawTicket?.ticketId.replaceAll('#', '').trim() ?? '';
+
+          if (cleanTid.isNotEmpty &&
+              currentTid.isNotEmpty &&
+              cleanTid != currentTid) {
+            return;
+          }
+
+          if (mounted) {
+            setState(() {
+              _isDrawCompleted = true;
+              if (payload['awarded_prizes'] is List) {
+                for (final item in payload['awarded_prizes']) {
+                  if (item is Map) {
+                    final k = (item['prize_name']?.toString() ?? '')
+                        .toLowerCase()
+                        .trim();
+                    if (k.isNotEmpty) {
+                      _awardedPrizes[k] = Map<String, dynamic>.from(item);
+                    }
+                  }
+                }
+              }
+            });
+
+            _showDrawCompletedDialog();
+          }
+        },
+      );
+
+      // 8. Prize payout transferred to winner
+      _broadcastChannel?.onBroadcast(
+        event: 'payout_transferred',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid =
+              _drawTicket?.ticketId.replaceAll('#', '').trim() ?? '';
+
+          if (cleanTid.isNotEmpty &&
+              currentTid.isNotEmpty &&
+              cleanTid != currentTid) {
+            return;
+          }
+
+          final auth = Provider.of<AuthProvider>(context, listen: false);
+          final myUserId = auth.currentUser?.id;
+          final winnerUserId = payload['user_id']?.toString();
+          final pName = payload['prize_name']?.toString() ?? 'Prize';
+          final amount = payload['amount']?.toString() ?? '0';
+
+          if (mounted) {
+            if (myUserId != null &&
+                winnerUserId != null &&
+                myUserId.toString() == winnerUserId) {
+              Provider.of<WalletProvider>(context, listen: false).refreshAll();
+              _showPayoutReceivedDialog(
+                prizeName: pName,
+                amount: amount,
+              );
+            }
+          }
+        },
+      );
+
       _broadcastChannel?.subscribe();
 
       // Table CDC changes fallback for tickets
@@ -831,6 +909,18 @@ class _DrawPageState extends State<DrawPage>
   // PRIZE CLAIM VALIDATION & SUBMISSION
   // ===========================================================================
   void _handlePrizeClaim(PrizeItem prize) {
+    if (_isDrawCompleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              '🔒 This draw is completed & locked. Prize claims are closed.'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     if (_userPurchasedTickets.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1414,6 +1504,168 @@ class _DrawPageState extends State<DrawPage>
     );
   }
 
+  void _showDrawCompletedDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: const [
+            Icon(Icons.lock_rounded, color: Color(0xFFE74C3C), size: 26),
+            SizedBox(width: 8),
+            Expanded(child: Text('Draw Completed & Locked')),
+          ],
+        ),
+        content: const Text(
+          'This draw session has officially ended and the results have been locked by the host. All winning payouts are being credited to winners\' wallets.',
+          style: TextStyle(fontSize: 13.5, height: 1.4),
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E3C72),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('View Results'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPayoutReceivedDialog({
+    required String prizeName,
+    required String amount,
+  }) {
+    if (_voiceEnabled) {
+      try {
+        _flutterTts.speak(
+            'Congratulations! ₹$amount prize money has been credited to your wallet!');
+      } catch (_) {}
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: const [
+            Icon(Icons.account_balance_wallet_rounded,
+                color: Color(0xFF00B894), size: 26),
+            SizedBox(width: 8),
+            Expanded(child: Text('Prize Money Credited!')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '🎉 Congratulations! Your prize payout of ₹$amount for winning "$prizeName" has been transferred directly into your GaGa wallet!',
+              style: const TextStyle(fontSize: 13.5, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FDF4),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF86EFAC)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded,
+                      color: Color(0xFF16A34A), size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Transferred: ₹$amount',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF166534)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00B894),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Got it!'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDrawCompletedBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFB71C1C), Color(0xFFC0392B)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.red.withOpacity(0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              shape: BoxShape.circle,
+            ),
+            child:
+                const Icon(Icons.lock_rounded, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  '🔒 DRAW COMPLETED & LOCKED',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'The host has concluded this draw. All winners are finalized and prize money is credited to user wallets.',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ===========================================================================
   // REAL-TIME PATTERN ANALYSIS & SMART AUTO-SUGGEST ALERTS
   // ===========================================================================
@@ -1975,6 +2227,12 @@ class _DrawPageState extends State<DrawPage>
                       // Active Draw Switcher Card
                       _buildDrawSwitcherCard(),
                       const SizedBox(height: 12),
+
+                      // Draw Completed & Locked Ribbon
+                      if (_isDrawCompleted) ...[
+                        _buildDrawCompletedBanner(),
+                        const SizedBox(height: 12),
+                      ],
 
                       // Auto-Suggest Claim Banner (Pulsing high-priority when cells fill)
                       if (readyList.isNotEmpty) ...[
@@ -3339,11 +3597,15 @@ class _DrawPageState extends State<DrawPage>
                         ),
                         onPressed: null,
                         child: Text(
-                          'CLOSED 🔒',
+                          awardInfo?['payout_status'] == 'Transferred'
+                              ? 'WON & PAID ✅'
+                              : 'CLOSED 🔒',
                           style: TextStyle(
                             fontSize: 10.5,
                             fontWeight: FontWeight.bold,
-                            color: Colors.grey.shade600,
+                            color: awardInfo?['payout_status'] == 'Transferred'
+                                ? const Color(0xFF16A34A)
+                                : Colors.grey.shade600,
                           ),
                         ),
                       ),

@@ -1486,44 +1486,53 @@ class _AdminTambolaConfiguratorPageState
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(7),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.confirmation_number_rounded,
-                  color: AppColors.primaryGreen,
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.ticket.ticketTitle,
-                    style: const TextStyle(
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1F2937),
-                    ),
+          Expanded(
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(height: 1),
-                  Text(
-                    'ID: ${widget.ticket.ticketId} • Draw: ${widget.ticket.drawDate}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade600,
-                    ),
+                  child: const Icon(
+                    Icons.confirmation_number_rounded,
+                    color: AppColors.primaryGreen,
+                    size: 18,
                   ),
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.ticket.ticketTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1F2937),
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        'ID: ${widget.ticket.ticketId} • Draw: ${widget.ticket.drawDate}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
+          const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
@@ -1674,19 +1683,27 @@ class _AdminTambolaConfiguratorPageState
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Select Ticket SL to Edit:',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF1F2937),
+            const Flexible(
+              child: Text(
+                'Select Ticket SL to Edit:',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1F2937),
+                ),
               ),
             ),
-            Text(
-              'Set 1: SL 1–3 • Set 2: SL 4–6',
-              style: TextStyle(
-                fontSize: 10.5,
-                color: Colors.grey.shade600,
+            const SizedBox(width: 6),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                'Set 1: SL 1–3 • Set 2: SL 4–6',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: Colors.grey.shade600,
+                ),
               ),
             ),
           ],
@@ -2196,34 +2213,44 @@ class _AdminTambolaConfiguratorPageState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Tray Header
+          // Tray Header (Responsive)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Row(
-                children: [
-                  Icon(
-                    Icons.touch_app_rounded,
-                    size: 15,
-                    color: AppColors.primaryGreen,
-                  ),
-                  SizedBox(width: 4),
-                  Text(
-                    'Number Bank • Drag or Tap to Place',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1F2937),
+              const Expanded(
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.touch_app_rounded,
+                      size: 15,
+                      color: AppColors.primaryGreen,
                     ),
-                  ),
-                ],
+                    SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        'Number Bank • Drag/Tap',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1F2937),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              Text(
-                '${90 - usedNumbers.length} Available',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w500,
+              const SizedBox(width: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  '${90 - usedNumbers.length} Left',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ],
@@ -2393,52 +2420,58 @@ class _AdminTambolaConfiguratorPageState
         ),
         child: Row(
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '$completedCount of 6 Complete',
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1F2937),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '$completedCount of 6 Complete',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1F2937),
+                    ),
                   ),
-                ),
-                Text(
-                  '$totalFilled/90 Total Numbers Set',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    color: Colors.grey.shade600,
+                  Text(
+                    '$totalFilled/90 Numbers Set',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: Colors.grey.shade600,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-            const Spacer(),
+            const SizedBox(width: 8),
             ElevatedButton.icon(
               onPressed: _isSaving ? null : _handleSave,
               icon: _isSaving
                   ? const SizedBox(
-                      width: 16,
-                      height: 16,
+                      width: 14,
+                      height: 14,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
                         color: Colors.white,
                       ),
                     )
-                  : const Icon(Icons.cloud_upload_rounded, size: 16),
+                  : const Icon(Icons.cloud_upload_rounded, size: 15),
               label: Text(
-                  _isSaving ? 'Saving to DB...' : 'Save Tambola Tickets'),
+                  _isSaving ? 'Saving...' : 'Save Tickets'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryGreen,
                 foregroundColor: Colors.white,
                 elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),
                 ),
                 textStyle: const TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 12,
                   fontWeight: FontWeight.bold,
                 ),
               ),

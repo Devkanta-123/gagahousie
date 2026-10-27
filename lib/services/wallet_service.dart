@@ -484,6 +484,88 @@ class WalletService {
     }
   }
 
+  /// Transfer prize winnings directly to winner's wallet
+  Future<bool> transferPrizeToWinner({
+    required dynamic userId,
+    required String userEmail,
+    required double amount,
+    required String prizeName,
+    required String ticketId,
+    required String ticketTitle,
+    String? adminEmail,
+  }) async {
+    final client = _client;
+    final now = DateTime.now();
+
+    try {
+      // 1. Fetch or create winner's wallet
+      final wallet = await fetchOrCreateWallet(userId, userEmail);
+      final balanceBefore = wallet.balance;
+      final balanceAfter = balanceBefore + amount;
+
+      if (client != null) {
+        // 2. Update wallet balance in DB
+        await client.from('wallets').update({
+          'balance': balanceAfter,
+          'updated_at': now.toIso8601String(),
+        }).eq('user_id', userId);
+
+        // 3. Insert Credit Transaction with category 'winning'
+        await client.from('wallet_transactions').insert({
+          'wallet_id': wallet.id,
+          'user_id': userId,
+          'amount': amount,
+          'type': 'credit',
+          'category': 'winning',
+          'balance_before': balanceBefore,
+          'balance_after': balanceAfter,
+          'description': 'Prize Won: $prizeName ($ticketTitle #$ticketId)',
+          'reference_id': 'PRIZE-$ticketId-$prizeName',
+          'created_at': now.toIso8601String(),
+        });
+
+        // 4. Send Real-Time Notification
+        await createNotification(
+          userId: userId,
+          title: '🏆 Prize Money Credited!',
+          message:
+              'Congratulations! ₹${amount.toStringAsFixed(2)} for winning "$prizeName" on Draw #$ticketId has been transferred to your wallet.',
+          type: 'general',
+          metadata: {
+            'ticket_id': ticketId,
+            'prize_name': prizeName,
+            'amount': amount,
+            'balance_after': balanceAfter,
+            'original_type': 'prize_won',
+          },
+        );
+      } else {
+        // In-memory fallback
+        final userKey = userId.toString();
+        _fallbackWallets[userKey] = wallet.copyWith(balance: balanceAfter);
+        _fallbackTransactions.insert(
+          0,
+          WalletTransactionModel(
+            id: DateTime.now().millisecondsSinceEpoch,
+            userId: userId,
+            amount: amount,
+            type: 'credit',
+            category: 'winning',
+            balanceBefore: balanceBefore,
+            balanceAfter: balanceAfter,
+            description: 'Prize Won: $prizeName ($ticketTitle #$ticketId)',
+            referenceId: 'PRIZE-$ticketId-$prizeName',
+            createdAt: now,
+          ),
+        );
+      }
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ [TRANSFER PRIZE ERROR] $e');
+      return false;
+    }
+  }
+
   // ===========================================================================
   // 5. ATOMIC TICKET PURCHASE DEDUCTION
   // ===========================================================================

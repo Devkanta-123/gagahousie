@@ -9,14 +9,47 @@ import '../services/ticket_service.dart';
 class TicketProvider extends ChangeNotifier {
   List<TicketModel> _tickets = [];
   Set<String> _ticketIdsWithTambola = {};
+  List<Map<String, dynamic>> _recentWinners = [];
   bool _isLoading = false;
   String? _errorMessage;
   final List<RealtimeChannel> _activeChannels = [];
   Timer? _fallbackTimer;
 
   List<TicketModel> get tickets => _tickets;
+  List<Map<String, dynamic>> get recentWinners => _recentWinners;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+
+  /// Flat list of individual recent winners for ResultsTab, showing the real user name
+  List<Map<String, String>> get recentWinnersFlatList {
+    final List<Map<String, String>> flat = [];
+    for (final game in _recentWinners) {
+      final gameTitle = game['ticket']?.toString() ?? 'GaGa Housie';
+      final date = game['date']?.toString() ?? '';
+      final prizes = game['prizes'];
+      if (prizes is List) {
+        for (final p in prizes) {
+          if (p is Map) {
+            final winnerName = p['winner_name']?.toString() ??
+                p['winner']?.toString() ??
+                'Player';
+            final slNo = p['sl_no']?.toString() ?? '';
+            final displayWinner =
+                slNo.isNotEmpty ? '$winnerName (SL #$slNo)' : winnerName;
+            flat.add({
+              'game': '$gameTitle - ${p['name'] ?? 'Prize'}',
+              'prize': p['price']?.toString() ?? '₹0',
+              'date': date,
+              'winner': displayWinner,
+              'winner_name': winnerName,
+              'sl_no': slNo,
+            });
+          }
+        }
+      }
+    }
+    return flat;
+  }
 
   /// Check if a draw ticket has tambola numbers configured
   bool hasTambolaTickets(String ticketId) {
@@ -200,12 +233,30 @@ class TicketProvider extends ChangeNotifier {
         }
       }
 
+      // Fetch recent winners from real DB
+      try {
+        _recentWinners = await TicketService.instance.fetchRecentWinners();
+      } catch (we) {
+        debugPrint('⚠️ [WINNERS FETCH NOTICE] $we');
+      }
+
       _errorMessage = null;
     } catch (e) {
       _errorMessage = e.toString();
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  /// On-demand refresh of recent winners from real Supabase DB
+  Future<void> fetchRecentWinners() async {
+    try {
+      final fetched = await TicketService.instance.fetchRecentWinners();
+      _recentWinners = fetched;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('⚠️ [PROVIDER RECENT WINNERS ERROR] $e');
     }
   }
 

@@ -1,75 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/ticket_provider.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
 
 class ResultsTab extends StatelessWidget {
   const ResultsTab({super.key});
 
-  final List<Map<String, String>> results = const [
-    {
-      'game': 'Game #1234',
-      'prize': '₹100',
-      'date': '20/09/2023',
-      'winner': 'Winner 1'
-    },
-    {
-      'game': 'Game #1233',
-      'prize': '₹50',
-      'date': '19/09/2023',
-      'winner': 'Winner 2'
-    },
-    {
-      'game': 'Game #1232',
-      'prize': '₹200',
-      'date': '18/09/2023',
-      'winner': 'Winner 3'
-    },
-    {
-      'game': 'Game #1231',
-      'prize': '₹75',
-      'date': '17/09/2023',
-      'winner': 'Winner 4'
-    },
-    {
-      'game': 'Game #1230',
-      'prize': '₹150',
-      'date': '16/09/2023',
-      'winner': 'Winner 5'
-    },
-    {
-      'game': 'Game #1229',
-      'prize': '₹90',
-      'date': '15/09/2023',
-      'winner': 'Winner 6'
-    },
-    {
-      'game': 'Game #1228',
-      'prize': '₹120',
-      'date': '14/09/2023',
-      'winner': 'Winner 7'
-    },
-    {
-      'game': 'Game #1227',
-      'prize': '₹80',
-      'date': '13/09/2023',
-      'winner': 'Winner 8'
-    },
-    {
-      'game': 'Game #1226',
-      'prize': '₹60',
-      'date': '12/09/2023',
-      'winner': 'Winner 9'
-    },
-    {
-      'game': 'Game #1225',
-      'prize': '₹250',
-      'date': '11/09/2023',
-      'winner': 'Winner 10'
-    },
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final provider = Provider.of<TicketProvider>(context);
+    final results = provider.recentWinnersFlatList;
+
     return Column(
       children: [
         // Reusable Branded Header
@@ -118,13 +60,57 @@ class ResultsTab extends StatelessWidget {
         ),
 
         Expanded(
-          child: ListView.builder(
-            padding:
-                const EdgeInsets.symmetric(horizontal: AppDimens.paddingLarge),
-            itemCount: results.length,
-            itemBuilder: (context, index) {
-              return _buildResultCard(results[index]);
-            },
+          child: RefreshIndicator(
+            color: AppColors.primaryGreen,
+            onRefresh: () => provider.fetchRecentWinners(),
+            child: results.isEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.45,
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.emoji_events_outlined,
+                                size: 52,
+                                color: AppColors.primaryGreen.withOpacity(0.35),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'No Completed Draws Yet',
+                                style: TextStyle(
+                                  color: Color(0xFF1E293B),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Results and winners will appear here once draws conclude',
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 12,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppDimens.paddingLarge),
+                    itemCount: results.length,
+                    itemBuilder: (context, index) {
+                      return _buildResultCard(results[index]);
+                    },
+                  ),
           ),
         ),
       ],
@@ -132,6 +118,11 @@ class ResultsTab extends StatelessWidget {
   }
 
   Widget _buildResultCard(Map<String, String> result) {
+    final gameTitle = result['game'] ?? 'GaGa Housie';
+    final winnerName = result['winner'] ?? 'Player';
+    final prize = result['prize'] ?? '₹0';
+    final date = result['date'] ?? '';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -175,24 +166,24 @@ class ResultsTab extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        result['game']!,
+                        gameTitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Color(0xFF2C3E50),
                           fontWeight: FontWeight.bold,
-                          fontSize: 15,
+                          fontSize: 14,
                         ),
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        'Winner: ${result['winner']}',
+                        'Winner: $winnerName',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: AppColors.textSecondary,
                           fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
@@ -206,40 +197,43 @@ class ResultsTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                result['prize']!,
+                prize,
                 style: const TextStyle(
                   color: AppColors.primaryGreen,
                   fontWeight: FontWeight.bold,
-                  fontSize: 16,
+                  fontSize: 15,
                 ),
               ),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryGreen.withOpacity(0.09),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.calendar_today_outlined,
-                      color: AppColors.primaryGreen.withOpacity(0.8),
-                      size: 9,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      result['date']!,
-                      style: const TextStyle(
-                        color: AppColors.primaryGreen,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w600,
+              if (date.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryGreen.withOpacity(0.09),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.calendar_today_outlined,
+                        color: AppColors.primaryGreen.withOpacity(0.8),
+                        size: 9,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 3),
+                      Text(
+                        date,
+                        style: const TextStyle(
+                          color: AppColors.primaryGreen,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ],

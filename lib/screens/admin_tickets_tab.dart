@@ -115,41 +115,49 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
 
                       const SizedBox(height: 20),
 
-                      // Section 2: Header with Live Ticket Count & Pagination Info
+                      // Section 2: Header with Live Ticket Count & Pagination Info (Responsive)
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'Published Tickets',
-                            style: TextStyle(
-                              color: AppColors.primaryGreen,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryGreen.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: AppColors.primaryGreen.withOpacity(0.2),
-                                width: 0.8,
+                          const Expanded(
+                            child: Text(
+                              'Published Tickets',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppColors.primaryGreen,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                            child: Text(
-                              isFiltering
-                                  ? '$totalTickets found • Page $_currentPage of $totalPages'
-                                  : (allTickets.isEmpty
-                                      ? '0 in DB'
-                                      : '${allTickets.length} in DB • Page $_currentPage of $totalPages'),
-                              style: const TextStyle(
-                                color: AppColors.primaryGreen,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
+                          ),
+                          const SizedBox(width: 8),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryGreen.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: AppColors.primaryGreen.withOpacity(0.2),
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: Text(
+                                isFiltering
+                                    ? '$totalTickets found • Page $_currentPage of $totalPages'
+                                    : (allTickets.isEmpty
+                                        ? '0 in DB'
+                                        : '${allTickets.length} in DB • Page $_currentPage of $totalPages'),
+                                style: const TextStyle(
+                                  color: AppColors.primaryGreen,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           ),
@@ -164,53 +172,48 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                         totalResults: totalTickets,
                       ),
 
-                      // Active Filter Indicator / Clear Action
+                      // Active Filter Indicator / Clear Action (Responsive)
                       if (isFiltering) ...[
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 9, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryGreen.withOpacity(0.08),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color:
-                                      AppColors.primaryGreen.withOpacity(0.2),
-                                  width: 0.8,
+                            Expanded(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 9, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primaryGreen.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: AppColors.primaryGreen.withOpacity(0.2),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.filter_alt_rounded,
+                                      size: 13,
+                                      color: AppColors.primaryGreen,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        'Filtering by ID: "$_searchQuery" ($totalTickets ${totalTickets == 1 ? "match" : "matches"})',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: AppColors.primaryGreen,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.filter_alt_rounded,
-                                    size: 13,
-                                    color: AppColors.primaryGreen,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    'Filtering by Ticket ID: "$_searchQuery"',
-                                    style: const TextStyle(
-                                      color: AppColors.primaryGreen,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '($totalTickets ${totalTickets == 1 ? "match" : "matches"})',
-                                    style: TextStyle(
-                                      color: Colors.grey.shade600,
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
                             ),
-                            const Spacer(),
+                            const SizedBox(width: 8),
                             InkWell(
                               onTap: () {
                                 _searchController.clear();
@@ -233,7 +236,7 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                                     ),
                                     SizedBox(width: 2),
                                     Text(
-                                      'Clear Filter',
+                                      'Clear',
                                       style: TextStyle(
                                         color: Color(0xFFD32F2F),
                                         fontSize: 11,
@@ -368,7 +371,7 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
       onTap: () => _showCreateTicketModal(context),
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        height: 108,
+        constraints: const BoxConstraints(minHeight: 104),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           gradient: AppColors.greenGradient,
@@ -419,15 +422,19 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
             const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '+ Create Ticket',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.bold,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '+ Create Ticket',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 SizedBox(height: 2),
@@ -457,7 +464,7 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
     required Color iconColor,
   }) {
     return Container(
-      height: 108,
+      constraints: const BoxConstraints(minHeight: 104),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -489,27 +496,35 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                 ),
                 child: Icon(icon, color: iconColor, size: 18),
               ),
-              Text(
-                title,
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
+              Flexible(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 8),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF1F2937),
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    color: Color(0xFF1F2937),
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               const SizedBox(height: 2),
@@ -560,172 +575,47 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top Row: Autogen Ticket ID, Status & Price
+          // Top Row: Autogen Ticket ID & Price (Clean 2-level responsive header)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: isMatched
-                          ? AppColors.primaryGreen.withOpacity(0.18)
-                          : AppColors.primaryGreen.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: isMatched
-                            ? AppColors.primaryGreen
-                            : AppColors.primaryGreen.withOpacity(0.25),
-                        width: isMatched ? 1.2 : 0.8,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isMatched) ...[
-                          const Icon(
-                            Icons.check_circle_rounded,
-                            size: 13,
-                            color: AppColors.primaryGreen,
-                          ),
-                          const SizedBox(width: 4),
-                        ],
-                        Text(
-                          ticket.ticketId,
-                          style: const TextStyle(
-                            color: AppColors.primaryGreen,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
-                    ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: isMatched
+                      ? AppColors.primaryGreen.withOpacity(0.18)
+                      : AppColors.primaryGreen.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isMatched
+                        ? AppColors.primaryGreen
+                        : AppColors.primaryGreen.withOpacity(0.25),
+                    width: isMatched ? 1.2 : 0.8,
                   ),
-                  const SizedBox(width: 8),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE8F5E9),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          ticket.status,
-                          style: const TextStyle(
-                            color: Color(0xFF2E7D32),
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isMatched) ...[
+                      const Icon(
+                        Icons.check_circle_rounded,
+                        size: 13,
+                        color: AppColors.primaryGreen,
                       ),
-                      Builder(builder: (context) {
-                        final hasTambola = Provider.of<TicketProvider>(
-                                context,
-                                listen: false)
-                            .hasTambolaTickets(ticket.ticketId);
-                        return Container(
-                          margin: const EdgeInsets.only(left: 6),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: hasTambola
-                                ? const Color(0xFFE0F2FE)
-                                : const Color(0xFFFFFBEB),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: hasTambola
-                                  ? const Color(0xFFBAE6FD)
-                                  : const Color(0xFFFDE68A),
-                              width: 0.6,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                hasTambola
-                                    ? Icons.grid_view_rounded
-                                    : Icons.warning_amber_rounded,
-                                size: 10.5,
-                                color: hasTambola
-                                    ? const Color(0xFF0284C7)
-                                    : const Color(0xFFD97706),
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                hasTambola ? 'Tambola Set' : 'Needs Tambola',
-                                style: TextStyle(
-                                  color: hasTambola
-                                      ? const Color(0xFF0284C7)
-                                      : const Color(0xFFD97706),
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                      FutureBuilder<Set<int>>(
-                        future: TicketService.instance
-                            .fetchSoldOutSlNos(ticket.ticketId),
-                        builder: (context, snapshot) {
-                          final soldCount = snapshot.data?.length ?? 0;
-                          return InkWell(
-                            onTap: () => _showRegisteredBuyersBottomSheet(
-                                context, ticket),
-                            borderRadius: BorderRadius.circular(6),
-                            child: Container(
-                              margin: const EdgeInsets.only(left: 6),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: soldCount > 0
-                                    ? const Color(0xFFEDE9FE)
-                                    : const Color(0xFFF1F5F9),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: soldCount > 0
-                                      ? const Color(0xFFC4B5FD)
-                                      : const Color(0xFFCBD5E1),
-                                  width: 0.6,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.people_alt_rounded,
-                                    size: 10.5,
-                                    color: soldCount > 0
-                                        ? const Color(0xFF6366F1)
-                                        : const Color(0xFF64748B),
-                                  ),
-                                  const SizedBox(width: 3),
-                                  Text(
-                                    '$soldCount Sold',
-                                    style: TextStyle(
-                                      color: soldCount > 0
-                                          ? const Color(0xFF6366F1)
-                                          : const Color(0xFF64748B),
-                                      fontSize: 9.5,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                      const SizedBox(width: 4),
                     ],
-                  ),
-                ],
+                    Text(
+                      ticket.ticketId,
+                      style: const TextStyle(
+                        color: AppColors.primaryGreen,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               Text(
                 ticket.price,
@@ -734,6 +624,154 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                 ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
+
+          // Responsive Status Badges Row (Wraps automatically on small screens)
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              // 1. Status Badge
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 7, vertical: 2.5),
+                decoration: BoxDecoration(
+                  color: ticket.status.toLowerCase() == 'completed'
+                      ? const Color(0xFFFEE2E2)
+                      : const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(6),
+                  border: ticket.status.toLowerCase() == 'completed'
+                      ? Border.all(color: const Color(0xFFFCA5A5), width: 0.8)
+                      : null,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (ticket.status.toLowerCase() == 'completed') ...[
+                      const Icon(Icons.lock_rounded,
+                          size: 10, color: Color(0xFFB91C1C)),
+                      const SizedBox(width: 3),
+                    ],
+                    Text(
+                      ticket.status.toLowerCase() == 'completed'
+                          ? 'COMPLETED & LOCKED'
+                          : ticket.status,
+                      style: TextStyle(
+                        color: ticket.status.toLowerCase() == 'completed'
+                            ? const Color(0xFFB91C1C)
+                            : const Color(0xFF2E7D32),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // 2. Tambola Setup Badge
+              Builder(builder: (context) {
+                final hasTambola = Provider.of<TicketProvider>(
+                        context,
+                        listen: false)
+                    .hasTambolaTickets(ticket.ticketId);
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2.5),
+                  decoration: BoxDecoration(
+                    color: hasTambola
+                        ? const Color(0xFFE0F2FE)
+                        : const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: hasTambola
+                          ? const Color(0xFFBAE6FD)
+                          : const Color(0xFFFDE68A),
+                      width: 0.6,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        hasTambola
+                            ? Icons.grid_view_rounded
+                            : Icons.warning_amber_rounded,
+                        size: 10.5,
+                        color: hasTambola
+                            ? const Color(0xFF0284C7)
+                            : const Color(0xFFD97706),
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        hasTambola ? 'Tambola Set' : 'Needs Tambola',
+                        style: TextStyle(
+                          color: hasTambola
+                              ? const Color(0xFF0284C7)
+                              : const Color(0xFFD97706),
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+
+              // 3. Registered Buyers / Sold Count Badge
+              FutureBuilder<Set<int>>(
+                future: TicketService.instance
+                    .fetchSoldOutSlNos(ticket.ticketId),
+                builder: (context, snapshot) {
+                  final soldCount = snapshot.data?.length ?? 0;
+                  return InkWell(
+                    onTap: () => _showRegisteredBuyersBottomSheet(
+                        context, ticket),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2.5),
+                      decoration: BoxDecoration(
+                        color: soldCount > 0
+                            ? const Color(0xFFEDE9FE)
+                            : const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: soldCount > 0
+                              ? const Color(0xFFC4B5FD)
+                              : const Color(0xFFCBD5E1),
+                          width: 0.6,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.people_alt_rounded,
+                            size: 10.5,
+                            color: soldCount > 0
+                                ? const Color(0xFF6366F1)
+                                : const Color(0xFF64748B),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '$soldCount Sold',
+                            style: TextStyle(
+                              color: soldCount > 0
+                                  ? const Color(0xFF6366F1)
+                                  : const Color(0xFF64748B),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
             ],
           ),
@@ -826,51 +864,76 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                '${ticket.prizes.length} Prize Tiers Included',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w500,
+              Expanded(
+                child: Text(
+                  '${ticket.prizes.length} Prize Tiers Included',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // 1. Start Housie / Tambola Draw (Icon Only)
-                  Tooltip(
-                    message: 'Start Housie / Tambola Draw',
-                    child: InkWell(
-                      onTap: () => _showStartHousieBottomSheet(context, ticket),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        width: 34,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFFF7971E), Color(0xFFFFD200)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFFF7971E).withOpacity(0.35),
-                              blurRadius: 5,
-                              offset: const Offset(0, 2),
+                  // 1. Start Housie / Tambola Draw or View Completed Ledger (Icon Only)
+                  Builder(builder: (context) {
+                    final isCompleted =
+                        ticket.status.toLowerCase() == 'completed';
+                    return Tooltip(
+                      message: isCompleted
+                          ? 'View Winners & Payouts (Completed & Locked)'
+                          : 'Start Housie / Tambola Draw',
+                      child: InkWell(
+                        onTap: () =>
+                            _showStartHousieBottomSheet(context, ticket),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          width: 34,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: isCompleted
+                                  ? const [
+                                      Color(0xFF27AE60),
+                                      Color(0xFF2ECC71)
+                                    ]
+                                  : const [
+                                      Color(0xFFF7971E),
+                                      Color(0xFFFFD200)
+                                    ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
                             ),
-                          ],
-                        ),
-                        child: const Center(
-                          child: Icon(
-                            Icons.play_arrow_rounded,
-                            size: 20,
-                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (isCompleted
+                                        ? const Color(0xFF27AE60)
+                                        : const Color(0xFFF7971E))
+                                    .withOpacity(0.35),
+                                blurRadius: 5,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Center(
+                            child: Icon(
+                              isCompleted
+                                  ? Icons.emoji_events_rounded
+                                  : Icons.play_arrow_rounded,
+                              size: 19,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                   const SizedBox(width: 7),
 
                   // 2. Setup/View Tambola Numbers button (Icon Only)
@@ -1008,17 +1071,22 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Info: Showing 1–5 of 12 (Filtered)
-          Text(
-            isFiltered
-                ? 'Showing ${startIndex + 1}–$endIndex of $totalTickets (Filtered)'
-                : 'Showing ${startIndex + 1}–$endIndex of $totalTickets',
-            style: TextStyle(
-              color: Colors.grey.shade700,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+          // Info: Showing 1–5 of 12 (Filtered) (Responsive Expanded)
+          Expanded(
+            child: Text(
+              isFiltered
+                  ? 'Showing ${startIndex + 1}–$endIndex of $totalTickets (Filtered)'
+                  : 'Showing ${startIndex + 1}–$endIndex of $totalTickets',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
+          const SizedBox(width: 8),
 
           // Pagination Buttons: [<] Page 1 of 3 [>]
           Row(
@@ -1160,7 +1228,7 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
               ),
               textInputAction: TextInputAction.search,
               decoration: InputDecoration(
-                hintText: 'Search by Ticket ID (e.g. GAGA26000001)...',
+                hintText: 'Search Ticket ID (e.g. #1001)...',
                 hintStyle: TextStyle(
                   color: Colors.grey.shade400,
                   fontSize: 12.5,
@@ -1528,20 +1596,35 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
-                              _buildBuyerStatItem(
-                                  'Total Buyers', '${grouped.length} Players'),
+                              Expanded(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: _buildBuyerStatItem(
+                                      'Total Buyers', '${grouped.length} Players'),
+                                ),
+                              ),
                               Container(
                                   width: 1,
                                   height: 24,
                                   color: Colors.grey.shade300),
-                              _buildBuyerStatItem(
-                                  'Tickets Sold', '$totalTicketsSold SLs'),
+                              Expanded(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: _buildBuyerStatItem(
+                                      'Tickets Sold', '$totalTicketsSold SLs'),
+                                ),
+                              ),
                               Container(
                                   width: 1,
                                   height: 24,
                                   color: Colors.grey.shade300),
-                              _buildBuyerStatItem('Total Pool',
-                                  '₹${totalRevenue.toStringAsFixed(0)}'),
+                              Expanded(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: _buildBuyerStatItem('Total Pool',
+                                      '₹${totalRevenue.toStringAsFixed(0)}'),
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -1718,8 +1801,20 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
     );
   }
 
-  /// Opens the Start Housie Options Sheet with 3 Game Modes
+  /// Opens the Start Housie Options Sheet with 3 Game Modes (or opens completed locked draw directly)
   void _showStartHousieBottomSheet(BuildContext context, TicketModel ticket) {
+    if (ticket.status.toLowerCase() == 'completed') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AdminHousieGamePage(
+            ticket: ticket,
+            initialMode: HousieGameMode.systemAuto,
+          ),
+        ),
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -2423,32 +2518,38 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryGreen.withOpacity(0.1),
-                            shape: BoxShape.circle,
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryGreen.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.confirmation_number_rounded,
+                              color: AppColors.primaryGreen,
+                              size: 20,
+                            ),
                           ),
-                          child: const Icon(
-                            Icons.confirmation_number_rounded,
-                            color: AppColors.primaryGreen,
-                            size: 20,
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              isEdit
+                                  ? 'Edit Draw Ticket'
+                                  : 'Create New Draw Ticket',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primaryGreen,
+                              ),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          isEdit
-                              ? 'Edit Draw Ticket'
-                              : 'Create New Draw Ticket',
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primaryGreen,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.close_rounded),
@@ -2613,28 +2714,27 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
                     if (isEdit) ...[
                       const SizedBox(height: 14),
                       _buildFieldLabel('Draw Status'),
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
                         children:
                             ['Active', 'Completed', 'Cancelled'].map((st) {
                           final selected =
                               _status.toLowerCase() == st.toLowerCase();
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ChoiceChip(
-                              label: Text(st),
-                              selected: selected,
-                              selectedColor: AppColors.primaryGreen,
-                              labelStyle: TextStyle(
-                                color: selected ? Colors.white : Colors.black87,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 12,
-                              ),
-                              onSelected: (_) {
-                                setState(() {
-                                  _status = st;
-                                });
-                              },
+                          return ChoiceChip(
+                            label: Text(st),
+                            selected: selected,
+                            selectedColor: AppColors.primaryGreen,
+                            labelStyle: TextStyle(
+                              color: selected ? Colors.white : Colors.black87,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
                             ),
+                            onSelected: (_) {
+                              setState(() {
+                                _status = st;
+                              });
+                            },
                           );
                         }).toList(),
                       ),
