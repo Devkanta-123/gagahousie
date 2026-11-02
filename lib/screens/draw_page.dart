@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:provider/provider.dart';
@@ -15,15 +17,17 @@ import 'ticket_selection_page.dart';
 
 class DrawPage extends StatefulWidget {
   final String? ticketId;
+  final bool? isLive;
+  final String? mode;
 
-  const DrawPage({super.key, this.ticketId});
+  const DrawPage({super.key, this.ticketId, this.isLive, this.mode});
 
   @override
   State<DrawPage> createState() => _DrawPageState();
 }
 
 class _DrawPageState extends State<DrawPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   // Current Draw Model & All Available Draws
   TicketModel? _drawTicket;
   List<TicketModel> _availableDraws = [];
@@ -58,6 +62,22 @@ class _DrawPageState extends State<DrawPage>
   bool _isBoardExpanded = true;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
+
+  // Live Stream State (from Admin side)
+  bool _isLiveStreamMode = false;
+  bool _isHostVideoActive = true;
+  bool _isHostMicActive = true;
+  int _liveElapsedSeconds = 0;
+  Timer? _liveDurationTimer;
+  Uint8List? _lastHostCameraFrame;
+  bool _userAudioMuted = false;
+  bool _isLiveStreamExpanded = true;
+  bool _isHostSpeaking = false;
+  Timer? _hostSpeakingTimer;
+
+  // Sound Wave Animation for Live Host Audio
+  late AnimationController _waveController;
+  late Animation<double> _waveAnimation;
 
   // Voice TTS
   final FlutterTts _flutterTts = FlutterTts();
@@ -161,6 +181,11 @@ class _DrawPageState extends State<DrawPage>
   void initState() {
     super.initState();
 
+    _isLiveStreamMode = widget.isLive == true || widget.mode == 'realLive';
+    if (_isLiveStreamMode) {
+      _startLiveTimer();
+    }
+
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -169,12 +194,23 @@ class _DrawPageState extends State<DrawPage>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
+    _waveController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 650),
+    )..repeat(reverse: true);
+    _waveAnimation = Tween<double>(begin: 0.35, end: 1.0).animate(
+      CurvedAnimation(parent: _waveController, curve: Curves.easeInOut),
+    );
+
     _initTts();
     _loadDrawData();
   }
 
   @override
   void dispose() {
+    _liveDurationTimer?.cancel();
+    _hostSpeakingTimer?.cancel();
+    _waveController.dispose();
     try {
       _flutterTts.stop();
     } catch (_) {}
@@ -182,6 +218,52 @@ class _DrawPageState extends State<DrawPage>
     _broadcastChannel?.unsubscribe();
     _ticketsTableChannel?.unsubscribe();
     super.dispose();
+  }
+
+  void _startLiveTimer() {
+    if (_liveDurationTimer != null && _liveDurationTimer!.isActive) return;
+    _liveDurationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() {
+          _liveElapsedSeconds++;
+        });
+      }
+    });
+  }
+
+  String _formatLiveDuration(int totalSeconds) {
+    final m = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final s = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  void _triggerHostSpeakingAnimation() {
+    _hostSpeakingTimer?.cancel();
+    if (mounted) {
+      setState(() => _isHostSpeaking = true);
+    }
+    _hostSpeakingTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) {
+        setState(() => _isHostSpeaking = false);
+      }
+    });
+  }
+
+  void _requestHostLiveState() {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && _broadcastChannel != null) {
+        final cleanId = _drawTicket?.ticketId.replaceAll('#', '').trim() ??
+            widget.ticketId?.replaceAll('#', '').trim() ??
+            '';
+        _broadcastChannel!.sendBroadcastMessage(
+          event: 'request_live_state',
+          payload: {
+            'ticket_id': cleanId,
+          },
+        );
+      }
+    } catch (_) {}
   }
 
   Future<void> _initTts() async {
@@ -376,6 +458,7 @@ class _DrawPageState extends State<DrawPage>
 
     // 4. Setup real-time listener for this draw
     _setupRealtimeChannel();
+    _requestHostLiveState();
   }
 
   /// Switches to another draw seamlessly
@@ -425,6 +508,25 @@ class _DrawPageState extends State<DrawPage>
             return;
           }
 
+          final isLive =
+              payload['is_live'] == true || payload['mode'] == 'realLive';
+          if (isLive) {
+            _isLiveStreamMode = true;
+            if (payload['is_video_active'] != null) {
+              _isHostVideoActive = payload['is_video_active'] == true;
+            }
+            if (payload['is_mic_active'] != null) {
+              _isHostMicActive = payload['is_mic_active'] == true;
+            }
+            if (payload['live_elapsed_seconds'] != null) {
+              final s = int.tryParse(payload['live_elapsed_seconds'].toString());
+              if (s != null && s > _liveElapsedSeconds) {
+                _liveElapsedSeconds = s;
+              }
+            }
+            _startLiveTimer();
+          }
+
           final num = int.tryParse(payload['number']?.toString() ?? '');
           final calledList = payload['called_numbers'];
           final announcement = payload['announcement']?.toString();
@@ -453,7 +555,11 @@ class _DrawPageState extends State<DrawPage>
               }
             });
 
-            _speakAnnouncement(num, announcement);
+            // Play host audio speech if host mic is active and user didn't mute stream
+            if (_isHostMicActive && !_userAudioMuted && _voiceEnabled) {
+              _triggerHostSpeakingAnimation();
+              _speakAnnouncement(num, announcement);
+            }
 
             // Check if any pattern is 1-away or ready to claim, and announce
             final analysis = _analyzeUserTickets();
@@ -678,23 +784,51 @@ class _DrawPageState extends State<DrawPage>
             return;
           }
 
+          final isLive =
+              payload['is_live'] == true || payload['mode'] == 'realLive';
           if (mounted) {
+            if (isLive) {
+              setState(() {
+                _isLiveStreamMode = true;
+                if (payload['is_video_active'] != null) {
+                  _isHostVideoActive = payload['is_video_active'] == true;
+                }
+                if (payload['is_mic_active'] != null) {
+                  _isHostMicActive = payload['is_mic_active'] == true;
+                }
+                if (payload['live_elapsed_seconds'] != null) {
+                  _liveElapsedSeconds = int.tryParse(
+                          payload['live_elapsed_seconds'].toString()) ??
+                      _liveElapsedSeconds;
+                }
+              });
+              _startLiveTimer();
+            }
+
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Row(
-                  children: const [
-                    Icon(Icons.play_circle_fill_rounded,
-                        color: Colors.amberAccent),
-                    SizedBox(width: 8),
+                  children: [
+                    Icon(
+                      isLive
+                          ? Icons.videocam_rounded
+                          : Icons.play_circle_fill_rounded,
+                      color: Colors.amberAccent,
+                    ),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '🎯 The host has officially started this draw! Best of luck!',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                        isLive
+                            ? '🎥 The host has started the LIVE VIDEO & AUDIO draw! Watch now.'
+                            : '🎯 The host has officially started this draw! Best of luck!',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],
                 ),
-                backgroundColor: const Color(0xFF1E3C72),
+                backgroundColor: isLive
+                    ? const Color(0xFFE74C3C)
+                    : const Color(0xFF1E3C72),
                 duration: const Duration(seconds: 4),
                 behavior: SnackBarBehavior.floating,
               ),
@@ -775,7 +909,90 @@ class _DrawPageState extends State<DrawPage>
         },
       );
 
-      _broadcastChannel?.subscribe();
+      // 9. Host live stream status & state synchronization
+      _broadcastChannel?.onBroadcast(
+        event: 'live_stream_update',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid =
+              _drawTicket?.ticketId.replaceAll('#', '').trim() ?? '';
+
+          if (cleanTid.isNotEmpty &&
+              currentTid.isNotEmpty &&
+              cleanTid != currentTid) {
+            return;
+          }
+
+          final isLive =
+              payload['is_live'] == true || payload['mode'] == 'realLive';
+          if (mounted) {
+            setState(() {
+              _isLiveStreamMode = isLive;
+              if (payload['is_video_active'] != null) {
+                _isHostVideoActive = payload['is_video_active'] == true;
+              }
+              if (payload['is_mic_active'] != null) {
+                _isHostMicActive = payload['is_mic_active'] == true;
+              }
+              if (payload['live_elapsed_seconds'] != null) {
+                final s =
+                    int.tryParse(payload['live_elapsed_seconds'].toString());
+                if (s != null && s > _liveElapsedSeconds) {
+                  _liveElapsedSeconds = s;
+                }
+              }
+              if (payload['current_number'] != null) {
+                final cn = int.tryParse(payload['current_number'].toString());
+                if (cn != null && cn > 0) {
+                  _currentNumber = cn;
+                  _calledNumbers.add(cn);
+                }
+              }
+              if (payload['announcement'] != null) {
+                _lastAnnouncement = payload['announcement'].toString();
+              }
+            });
+            if (isLive) {
+              _startLiveTimer();
+            }
+          }
+        },
+      );
+
+      // 10. Real-time camera snapshot frame from host
+      _broadcastChannel?.onBroadcast(
+        event: 'host_camera_frame',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid =
+              _drawTicket?.ticketId.replaceAll('#', '').trim() ?? '';
+
+          if (cleanTid.isNotEmpty &&
+              currentTid.isNotEmpty &&
+              cleanTid != currentTid) {
+            return;
+          }
+
+          final b64 = payload['frame']?.toString();
+          if (b64 != null && mounted) {
+            try {
+              final bytes = base64Decode(b64);
+              setState(() {
+                _lastHostCameraFrame = bytes;
+              });
+            } catch (_) {}
+          }
+        },
+      );
+
+      _broadcastChannel?.subscribe((status, error) {
+        if (status == RealtimeSubscribeStatus.subscribed) {
+          _requestHostLiveState();
+        }
+      });
+      _requestHostLiveState();
 
       // Table CDC changes fallback for tickets
       _ticketsTableChannel = client
@@ -977,29 +1194,112 @@ class _DrawPageState extends State<DrawPage>
 
     final pName = prize.name.trim();
 
-    // Check each purchased ticket to see if any satisfies the claim
-    ClaimValidationResult? bestResult;
-    for (int i = 0; i < _userPurchasedTickets.length; i++) {
-      final ticket = _userPurchasedTickets[i];
-      final res = _validateTicketForPrize(ticket, pName);
-      if (res.isValid) {
-        bestResult = res;
-        break;
-      } else {
-        if (bestResult == null ||
-            res.missingNumbers.length < bestResult.missingNumbers.length) {
-          bestResult = res;
+    ClaimValidationResult bestResult;
+    if (_isQuick10Prize(pName)) {
+      bestResult = _validateMixTicketsForQuickPrize(prize);
+    } else {
+      // Check each purchased ticket to see if any satisfies the claim
+      ClaimValidationResult? singleBestResult;
+      for (int i = 0; i < _userPurchasedTickets.length; i++) {
+        final ticket = _userPurchasedTickets[i];
+        final res = _validateTicketForPrize(ticket, pName);
+        if (res.isValid) {
+          singleBestResult = res;
+          break;
+        } else {
+          if (singleBestResult == null ||
+              res.missingNumbers.length < singleBestResult.missingNumbers.length) {
+            singleBestResult = res;
+          }
         }
       }
+      if (singleBestResult == null) return;
+      bestResult = singleBestResult;
     }
-
-    if (bestResult == null) return;
 
     if (bestResult.isValid) {
       _confirmAndBroadcastClaim(bestResult, prize);
     } else {
       _showBogeyDialog(bestResult, prize);
     }
+  }
+
+  bool _isQuick10Prize(String prizeName) {
+    final p = prizeName.toLowerCase().trim();
+    return p.contains('quick 10') ||
+        p.contains('quick10') ||
+        p.contains('quick ten') ||
+        p.contains('3 ticket') ||
+        p.contains('three ticket') ||
+        p.contains('3 tickets') ||
+        p.contains('three tickets') ||
+        p.contains('mix quick') ||
+        p.contains('quick mix') ||
+        (p.contains('quick') && p.contains('10'));
+  }
+
+  bool _isQuick5Prize(String prizeName) {
+    if (_isQuick10Prize(prizeName)) return false;
+    final p = prizeName.toLowerCase().trim();
+    return p.contains('quick 5') ||
+        p.contains('quick5') ||
+        p.contains('quick five') ||
+        p.contains('early 5') ||
+        p.contains('early five') ||
+        p.contains('five') ||
+        p.contains('quick');
+  }
+
+  ClaimValidationResult _validateMixTicketsForQuickPrize(PrizeItem prize) {
+    final List<TicketPurchaseModel> contributingTickets = [];
+    final List<int> allCalledNumbers = [];
+    final Map<int, List<int>> numbersPerTicket = {};
+    int totalMarked = 0;
+
+    for (final ticket in _userPurchasedTickets) {
+      final all15 = ticket.ticketData.expand((r) => r).whereType<int>().toList();
+      final called = all15.where((n) => _calledNumbers.contains(n)).toList();
+      if (called.isNotEmpty) {
+        contributingTickets.add(ticket);
+        numbersPerTicket[ticket.slNo] = called;
+        allCalledNumbers.addAll(called);
+        totalMarked += called.length;
+      }
+    }
+
+    const int target = 10;
+    final bool isValid = totalMarked >= target;
+    final int needed = target - totalMarked;
+
+    final slBreakdown = contributingTickets.isNotEmpty
+        ? contributingTickets
+            .map((t) => 'SL #${t.slNo} (${numbersPerTicket[t.slNo]!.length} marked: ${numbersPerTicket[t.slNo]!.join(", ")})')
+            .join('\n• ')
+        : 'None of your tickets have called numbers yet.';
+
+    final simpleSlStr = contributingTickets.isNotEmpty
+        ? contributingTickets.map((t) => 'SL #${t.slNo}').join(', ')
+        : (_userPurchasedTickets.isNotEmpty ? 'SL #${_userPurchasedTickets.first.slNo}' : '');
+
+    final explanation = isValid
+        ? 'Quick 10 satisfied with $totalMarked numbers marked across mix tickets:\n• $slBreakdown'
+        : 'Quick 10 requires at least 10 numbers marked across your tickets.\nYou currently have $totalMarked/10 marked numbers across:\n• $slBreakdown\nNeeds $needed more number(s).';
+
+    return ClaimValidationResult(
+      isValid: isValid,
+      prizeName: prize.name,
+      winningTicket: contributingTickets.isNotEmpty
+          ? contributingTickets.first
+          : (_userPurchasedTickets.isNotEmpty ? _userPurchasedTickets.first : null),
+      requiredNumbers: allCalledNumbers,
+      missingNumbers: isValid ? [] : List.generate(needed > 0 ? needed : 0, (i) => i),
+      explanation: explanation,
+      isMixClaim: true,
+      contributingTickets: contributingTickets,
+      contributingSlNos: simpleSlStr,
+      numbersPerTicket: numbersPerTicket,
+      totalMarkedCount: totalMarked,
+    );
   }
 
   ClaimValidationResult _validateTicketForPrize(
@@ -1024,7 +1324,7 @@ class _DrawPageState extends State<DrawPage>
       explanation = isValid
           ? 'All 15 numbers on your ticket have been called!'
           : 'Housefull requires all 15 numbers. You still need ${missing.length} number(s): ${missing.take(5).join(', ')}${missing.length > 5 ? '...' : ''}.';
-    } else if (nameLower.contains('quick') || nameLower.contains('five')) {
+    } else if (_isQuick5Prize(nameLower)) {
       final calledOnTicket =
           all15.where((n) => _calledNumbers.contains(n)).toList();
       required = all15;
@@ -1074,7 +1374,7 @@ class _DrawPageState extends State<DrawPage>
         explanation = 'Ticket does not have enough corner numbers.';
       }
     } else {
-      // General pattern or Quick 10
+      // General pattern
       final called = all15.where((n) => _calledNumbers.contains(n)).toList();
       isValid = called.length >= 5;
       explanation = isValid
@@ -1110,16 +1410,48 @@ class _DrawPageState extends State<DrawPage>
 
     // 1. Broadcast instant event to Host Screen with ticket_data
     try {
+      final contributingSlNosStr = result.isMixClaim
+          ? (result.contributingTickets.isNotEmpty
+              ? result.contributingTickets.map((t) => t.slNo.toString()).join(', ')
+              : result.winningTicket?.slNo.toString() ?? '1')
+          : (result.winningTicket?.slNo.toString() ?? '1');
+
+      final contributingSerialNos = result.isMixClaim
+          ? result.contributingTickets.map((t) => t.serialNumber).where((s) => s.isNotEmpty).join(', ')
+          : (result.winningTicket?.serialNumber ?? '');
+
+      final contributingUniqueCodes = result.isMixClaim
+          ? result.contributingTickets.map((t) => t.uniqueCode).where((c) => c.isNotEmpty).join(', ')
+          : (result.winningTicket?.uniqueCode ?? '');
+
+      final mixTicketsPayload = result.isMixClaim
+          ? result.contributingTickets.map((t) {
+              final tNums = t.ticketData.expand((r) => r).whereType<int>().toList();
+              final matched = tNums.where((n) => _calledNumbers.contains(n)).toList();
+              return {
+                'sl_no': t.slNo,
+                'serial_number': t.serialNumber,
+                'unique_code': t.uniqueCode,
+                'ticket_data': t.ticketData,
+                'matched_count': matched.length,
+                'matched_numbers': matched,
+              };
+            }).toList()
+          : null;
+
       final payload = {
         'ticket_id': tid,
         'prize_name': prize.name,
         'prize_amount': prize.price,
         'user_id': user?.id,
         'user_name': userName,
-        'sl_no': result.winningTicket?.slNo,
-        'serial_number': result.winningTicket?.serialNumber,
-        'unique_code': result.winningTicket?.uniqueCode,
+        'sl_no': contributingSlNosStr,
+        'serial_number': contributingSerialNos,
+        'unique_code': contributingUniqueCodes,
         'ticket_data': result.winningTicket?.ticketData,
+        'is_mix_claim': result.isMixClaim,
+        if (mixTicketsPayload != null) 'mix_tickets': mixTicketsPayload,
+        if (result.isMixClaim) 'total_matched': result.totalMarkedCount,
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
 
@@ -1147,8 +1479,186 @@ class _DrawPageState extends State<DrawPage>
     _showClaimSubmittedDialog(result, prize, userName);
   }
 
+  Widget _buildTambolaTicketPreviewGrid({
+    required List<List<int?>> grid,
+    required Set<int> calledNumbers,
+    int? slNo,
+    String? serialNumber,
+    int? matchedCount,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: (matchedCount != null && matchedCount > 0)
+              ? const Color(0xFF00B894).withOpacity(0.5)
+              : Colors.grey.shade300,
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (slNo != null) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6366F1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'SL #$slNo',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    if (serialNumber != null && serialNumber.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        serialNumber,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (matchedCount != null)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00B894).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF00B894).withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.check_circle_rounded,
+                            color: Color(0xFF00B894), size: 12),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$matchedCount Marked',
+                          style: const TextStyle(
+                            color: Color(0xFF00896F),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
+          // 3x9 Matrix
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Column(
+              children: List.generate(3, (rIdx) {
+                final rowList =
+                    rIdx < grid.length ? grid[rIdx] : List<int?>.filled(9, null);
+                return Padding(
+                  padding: EdgeInsets.only(bottom: rIdx < 2 ? 3.0 : 0.0),
+                  child: Row(
+                    children: List.generate(9, (cIdx) {
+                      final val = cIdx < rowList.length ? rowList[cIdx] : null;
+                      final isCalled =
+                          val != null && calledNumbers.contains(val);
+                      return Expanded(
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: val == null
+                                ? Colors.transparent
+                                : (isCalled
+                                    ? const Color(0xFF00B894)
+                                    : Colors.white),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: val == null
+                                  ? Colors.transparent
+                                  : (isCalled
+                                      ? const Color(0xFF00896F)
+                                      : Colors.grey.shade300),
+                              width: isCalled ? 1.2 : 0.8,
+                            ),
+                            boxShadow: isCalled
+                                ? [
+                                    BoxShadow(
+                                      color: const Color(0xFF00B894)
+                                          .withOpacity(0.35),
+                                      blurRadius: 3,
+                                      offset: const Offset(0, 1),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: Center(
+                            child: Text(
+                              val == null ? '' : '$val',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: isCalled ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showClaimSubmittedDialog(
       ClaimValidationResult result, PrizeItem prize, String userName) {
+    final slDisplayText = result.isMixClaim
+        ? (result.contributingTickets.isNotEmpty
+            ? result.contributingTickets
+                .map((t) =>
+                    'SL #${t.slNo} (${result.numbersPerTicket[t.slNo]?.length ?? 0})')
+                .join(', ')
+            : 'SL #${result.winningTicket?.slNo}')
+        : 'SL #${result.winningTicket?.slNo}';
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1178,47 +1688,114 @@ class _DrawPageState extends State<DrawPage>
             ),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Your claim for "${prize.name}" (${prize.price}) on SL #${result.winningTicket?.slNo} has been submitted to the Host for official verification.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF2C3E50),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00B894).withOpacity(0.08),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: const Color(0xFF00B894).withOpacity(0.3),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: MediaQuery.of(ctx).size.height * 0.65,
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  result.isMixClaim
+                      ? 'Your claim for "${prize.name}" (${prize.price}) across mix tickets ($slDisplayText) has been submitted to the Host for official verification.'
+                      : 'Your claim for "${prize.name}" (${prize.price}) on $slDisplayText has been submitted to the Host for official verification.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF2C3E50),
+                  ),
                 ),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.verified_user_rounded,
-                      color: Color(0xFF00B894), size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'The Host is checking your ticket live. Once approved, the winner will be officially announced!',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF00896F),
-                        fontWeight: FontWeight.w600,
+                const SizedBox(height: 14),
+                if (result.isMixClaim && result.contributingTickets.isNotEmpty) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.style_rounded,
+                              size: 16, color: Color(0xFF4F46E5)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Contributing Tickets (${result.totalMarkedCount}/10 Marked):',
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF4F46E5),
+                            ),
+                          ),
+                        ],
                       ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00B894).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          '10/10 TARGET MET ✅',
+                          style: TextStyle(
+                            color: Color(0xFF00896F),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  for (final t in result.contributingTickets) ...[
+                    _buildTambolaTicketPreviewGrid(
+                      grid: t.ticketData,
+                      calledNumbers: _calledNumbers.toSet(),
+                      slNo: t.slNo,
+                      serialNumber: t.serialNumber,
+                      matchedCount: result.numbersPerTicket[t.slNo]?.length ?? 0,
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                ] else if (result.winningTicket != null) ...[
+                  _buildTambolaTicketPreviewGrid(
+                    grid: result.winningTicket!.ticketData,
+                    calledNumbers: _calledNumbers.toSet(),
+                    slNo: result.winningTicket!.slNo,
+                    serialNumber: result.winningTicket!.serialNumber,
+                    matchedCount: result.requiredNumbers.length,
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00B894).withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: const Color(0xFF00B894).withOpacity(0.3),
                     ),
                   ),
-                ],
-              ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.verified_user_rounded,
+                          color: Color(0xFF00B894), size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'The Host is checking your ticket live. Once approved, the winner will be officially announced!',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF00896F),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
         actions: [
           Center(
@@ -1674,10 +2251,113 @@ class _DrawPageState extends State<DrawPage>
     final List<NearWinAlert> nearWinList = [];
     final Map<int, Set<int>> targetNumbersPerTicket = {};
 
+    if (_userPurchasedTickets.isEmpty || _calledNumbers.isEmpty) {
+      return PatternAnalysisResult(
+        readyToClaim: readyList,
+        nearWins: nearWinList,
+        targetNumbersPerTicket: targetNumbersPerTicket,
+      );
+    }
+
     final prizes = _drawTicket?.prizes ?? TicketModel.defaultPrizes();
 
+    // 1. Multi-Ticket Mix Prizes (Quick 10 / 3 Ticket Quick)
+    for (final prize in prizes) {
+      final pName = prize.name.trim();
+      final pLower = pName.toLowerCase();
+
+      // If prize is already won and closed, do not alert
+      if (_awardedPrizes.containsKey(pLower)) continue;
+
+      // If user already submitted a pending claim for this prize, skip
+      if (_pendingUserClaims.contains(pLower)) continue;
+
+      if (_isQuick10Prize(pName)) {
+        final List<TicketPurchaseModel> contributing = [];
+        final List<int> contributingSlNos = [];
+        final Map<int, List<int>> matchedNumbersPerTicket = {};
+        int totalMarkedAcrossTickets = 0;
+
+        for (int tIdx = 0; tIdx < _userPurchasedTickets.length; tIdx++) {
+          final ticket = _userPurchasedTickets[tIdx];
+          final all15 =
+              ticket.ticketData.expand((r) => r).whereType<int>().toList();
+          final calledOnThis =
+              all15.where((n) => _calledNumbers.contains(n)).toList();
+
+          if (calledOnThis.isNotEmpty) {
+            contributing.add(ticket);
+            contributingSlNos.add(ticket.slNo);
+            matchedNumbersPerTicket[ticket.slNo] = calledOnThis;
+            totalMarkedAcrossTickets += calledOnThis.length;
+          }
+        }
+
+        const int targetCount = 10;
+        final slDisplay = contributingSlNos.isNotEmpty
+            ? contributingSlNos
+                .map((sl) =>
+                    'SL #$sl (${matchedNumbersPerTicket[sl]!.length})')
+                .join(', ')
+            : '';
+        final simpleSlDisplay = contributingSlNos.isNotEmpty
+            ? contributingSlNos.map((sl) => 'SL #$sl').join(', ')
+            : (_userPurchasedTickets.isNotEmpty
+                ? 'SL #${_userPurchasedTickets.first.slNo}'
+                : '');
+
+        if (totalMarkedAcrossTickets >= targetCount) {
+          readyList.add(ReadyToClaimAlert(
+            prize: prize,
+            ticketIndex: contributing.isNotEmpty
+                ? _userPurchasedTickets.indexOf(contributing.first)
+                : 0,
+            slNo: contributingSlNos.isNotEmpty ? contributingSlNos.first : 0,
+            ticket: contributing.isNotEmpty
+                ? contributing.first
+                : _userPurchasedTickets.first,
+            patternType: 'Quick 10',
+            message:
+                '$totalMarkedAcrossTickets numbers marked across mix tickets ($slDisplay)! Ready to claim Quick 10!',
+            isMixClaim: true,
+            contributingTickets: contributing,
+            contributingSlNos: simpleSlDisplay,
+            totalMarkedCount: totalMarkedAcrossTickets,
+          ));
+        } else if (totalMarkedAcrossTickets == targetCount - 1) {
+          // EXACTLY 9 marked (1 away)
+          for (int tIdx = 0; tIdx < _userPurchasedTickets.length; tIdx++) {
+            targetNumbersPerTicket.putIfAbsent(tIdx, () => <int>{});
+            final ticket = _userPurchasedTickets[tIdx];
+            final all15 =
+                ticket.ticketData.expand((r) => r).whereType<int>().toList();
+            final uncalled =
+                all15.where((n) => !_calledNumbers.contains(n)).toList();
+            targetNumbersPerTicket[tIdx]!.addAll(uncalled);
+          }
+
+          nearWinList.add(NearWinAlert(
+            prizeName: prize.name,
+            ticketIndex: contributing.isNotEmpty
+                ? _userPurchasedTickets.indexOf(contributing.first)
+                : 0,
+            slNo: contributingSlNos.isNotEmpty ? contributingSlNos.first : 0,
+            missingNumber: 0,
+            patternType: 'Quick 10',
+            message:
+                'Just 1 more called number needed for ${prize.name} across tickets ($simpleSlDisplay)! (9/10 marked)',
+            isMix: true,
+            contributingSlNos: contributingSlNos,
+            mixTicketsDisplay: simpleSlDisplay,
+          ));
+        }
+        // If totalMarkedAcrossTickets <= 8: Do NOT add NearWinAlert! (Needs 2+ numbers, NOT 1 away!)
+      }
+    }
+
+    // 2. Single-Ticket Prizes per ticket
     for (int tIdx = 0; tIdx < _userPurchasedTickets.length; tIdx++) {
-      targetNumbersPerTicket[tIdx] = <int>{};
+      targetNumbersPerTicket.putIfAbsent(tIdx, () => <int>{});
       final ticket = _userPurchasedTickets[tIdx];
       final grid = ticket.ticketData;
       final row0 =
@@ -1700,6 +2380,9 @@ class _DrawPageState extends State<DrawPage>
 
         // If user already submitted a pending claim for this prize, skip
         if (_pendingUserClaims.contains(pLower)) continue;
+
+        // Skip multi-ticket Quick 10 (evaluated above across tickets)
+        if (_isQuick10Prize(pName)) continue;
 
         if (pLower.contains('housefull') || pLower.contains('house full')) {
           final missing =
@@ -1727,7 +2410,7 @@ class _DrawPageState extends State<DrawPage>
                   'Only number $targetNum needed for Housefull on SL #${ticket.slNo}!',
             ));
           }
-        } else if (pLower.contains('quick') || pLower.contains('five')) {
+        } else if (_isQuick5Prize(pName)) {
           final calledOnTicket =
               all15.where((n) => _calledNumbers.contains(n)).toList();
           if (calledOnTicket.length >= 5) {
@@ -1890,9 +2573,15 @@ class _DrawPageState extends State<DrawPage>
         Future.delayed(const Duration(milliseconds: 3200), () {
           if (mounted && _voiceEnabled) {
             try {
-              _flutterTts.speak(
-                '${alert.patternType} completed on ticket SL ${alert.slNo}! Claim your prize now!',
-              );
+              if (alert.isMixClaim) {
+                _flutterTts.speak(
+                  '${alert.patternType} completed across mix tickets ${alert.contributingSlNos}! Claim your prize now!',
+                );
+              } else {
+                _flutterTts.speak(
+                  '${alert.patternType} completed on ticket SL ${alert.slNo}! Claim your prize now!',
+                );
+              }
             } catch (_) {}
           }
         });
@@ -1909,7 +2598,11 @@ class _DrawPageState extends State<DrawPage>
         Future.delayed(const Duration(milliseconds: 3200), () {
           if (mounted && _voiceEnabled) {
             try {
-              if (alert.missingNumber > 0) {
+              if (alert.isMix) {
+                _flutterTts.speak(
+                  'Alert! Only one more number needed for ${alert.prizeName} across mix tickets ${alert.mixTicketsDisplay}!',
+                );
+              } else if (alert.missingNumber > 0) {
                 _flutterTts.speak(
                   'Alert! Only number ${alert.missingNumber} needed for ${alert.patternType} on ticket SL ${alert.slNo}!',
                 );
@@ -1955,40 +2648,86 @@ class _DrawPageState extends State<DrawPage>
             ),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Your ticket does not meet the pattern requirements for "${prize.name}" yet.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, color: Color(0xFF2C3E50)),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: Text(
-                result.explanation,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF34495E),
-                  fontWeight: FontWeight.w500,
+        content: SizedBox(
+          width: double.maxFinite,
+          height: MediaQuery.of(ctx).size.height * 0.65,
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  result.isMixClaim
+                      ? 'Your tickets do not meet the pattern requirements for "${prize.name}" yet.'
+                      : 'Your ticket does not meet the pattern requirements for "${prize.name}" yet.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF2C3E50)),
                 ),
-                textAlign: TextAlign.center,
-              ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: Text(
+                    result.explanation,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF34495E),
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                if (result.isMixClaim && result.contributingTickets.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      const Icon(Icons.style_rounded,
+                          size: 16, color: Color(0xFFD97706)),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Current Contributing Tickets (${result.totalMarkedCount}/10):',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFB45309),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  for (final t in result.contributingTickets) ...[
+                    _buildTambolaTicketPreviewGrid(
+                      grid: t.ticketData,
+                      calledNumbers: _calledNumbers.toSet(),
+                      slNo: t.slNo,
+                      serialNumber: t.serialNumber,
+                      matchedCount:
+                          result.numbersPerTicket[t.slNo]?.length ?? 0,
+                    ),
+                  ],
+                ] else if (result.winningTicket != null) ...[
+                  const SizedBox(height: 14),
+                  _buildTambolaTicketPreviewGrid(
+                    grid: result.winningTicket!.ticketData,
+                    calledNumbers: _calledNumbers.toSet(),
+                    slNo: result.winningTicket!.slNo,
+                    serialNumber: result.winningTicket!.serialNumber,
+                  ),
+                ],
+                const SizedBox(height: 12),
+                const Text(
+                  'Keep watching the caller board as more numbers are drawn!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'Keep watching the caller board as more numbers are drawn!',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
+          ),
         ),
         actions: [
           Center(
@@ -2244,13 +2983,21 @@ class _DrawPageState extends State<DrawPage>
                         const SizedBox(height: 12),
                       ],
 
+                      // Live Host Video & Audio Stream (when Draw is Started in Live Mode by Admin)
+                      if (_isLiveStreamMode) ...[
+                        _buildLiveHostVideoAudioHeroSection(),
+                        const SizedBox(height: 14),
+                      ],
+
                       // Status & Controls Ribbon
                       _buildStatusRibbon(),
                       const SizedBox(height: 14),
 
-                      // Big Current Number Card
-                      _buildCurrentNumberCard(),
-                      const SizedBox(height: 14),
+                      // Big Current Number Card (shown if not in live stream mode)
+                      if (!_isLiveStreamMode) ...[
+                        _buildCurrentNumberCard(),
+                        const SizedBox(height: 14),
+                      ],
 
                       // 1-90 Master Board (Collapsible)
                       _buildMasterBoardSection(),
@@ -2325,9 +3072,11 @@ class _DrawPageState extends State<DrawPage>
                           color: Colors.white.withOpacity(0.25),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: const Text(
-                          '⚡ READY TO CLAIM',
-                          style: TextStyle(
+                        child: Text(
+                          alert.isMixClaim
+                              ? '⚡ MIX QUICK READY'
+                              : '⚡ READY TO CLAIM',
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,
                             fontWeight: FontWeight.w900,
@@ -2336,19 +3085,27 @@ class _DrawPageState extends State<DrawPage>
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        'SL #${alert.slNo}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
+                      Expanded(
+                        child: Text(
+                          alert.isMixClaim && alert.contributingSlNos.isNotEmpty
+                              ? alert.contributingSlNos
+                              : 'SL #${alert.slNo}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    '${alert.prize.name} Completed!',
+                    alert.isMixClaim
+                        ? '${alert.prize.name} Completed Across Mix Tickets!'
+                        : '${alert.prize.name} Completed!',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 14.5,
@@ -2356,7 +3113,9 @@ class _DrawPageState extends State<DrawPage>
                     ),
                   ),
                   Text(
-                    'All required cells are filled. Tap CLAIM NOW before others!',
+                    alert.isMixClaim
+                        ? '${alert.totalMarkedCount} numbers marked across mix tickets! Tap CLAIM NOW before others!'
+                        : 'All required cells are filled. Tap CLAIM NOW before others!',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.9),
                       fontSize: 11,
@@ -2442,9 +3201,11 @@ class _DrawPageState extends State<DrawPage>
                         color: Colors.white.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: const Text(
-                        '🔥 1 CELL AWAY!',
-                        style: TextStyle(
+                      child: Text(
+                        alert.isMix
+                            ? '🔥 1 NUMBER AWAY (MIX)'
+                            : '🔥 1 CELL AWAY!',
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 10,
                           fontWeight: FontWeight.w900,
@@ -2453,21 +3214,29 @@ class _DrawPageState extends State<DrawPage>
                       ),
                     ),
                     const SizedBox(width: 6),
-                    Text(
-                      'SL #${alert.slNo}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
+                    Expanded(
+                      child: Text(
+                        alert.isMix && alert.mixTicketsDisplay.isNotEmpty
+                            ? alert.mixTicketsDisplay
+                            : 'SL #${alert.slNo}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  alert.missingNumber > 0
-                      ? 'Waiting for number ${alert.missingNumber} for ${alert.prizeName}!'
-                      : 'Just 1 more called number needed for ${alert.prizeName}!',
+                  alert.isMix
+                      ? 'Just 1 more called number needed for ${alert.prizeName}! (9/10 marked)'
+                      : (alert.missingNumber > 0
+                          ? 'Waiting for number ${alert.missingNumber} for ${alert.prizeName}!'
+                          : 'Just 1 more called number needed for ${alert.prizeName}!'),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12.5,
@@ -2595,6 +3364,578 @@ class _DrawPageState extends State<DrawPage>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // LIVE HOST VIDEO & AUDIO STREAM HERO SECTION (MODE 2: REAL LIVE)
+  // ===========================================================================
+  Widget _buildLiveHostVideoAudioHeroSection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFE74C3C).withOpacity(0.4),
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFE74C3C).withOpacity(0.18),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.35),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Stream Header Bar
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            color: const Color(0xFF1E293B),
+            child: Row(
+              children: [
+                // Pulsing LIVE Badge with Elapsed Timer
+                ScaleTransition(
+                  scale: _pulseAnimation,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade600,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.red.withOpacity(0.5),
+                          blurRadius: 6,
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4.5),
+                        Text(
+                          'LIVE ${_formatLiveDuration(_liveElapsedSeconds)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
+                // Host Audio Status Badge
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3.5),
+                  decoration: BoxDecoration(
+                    color: _isHostMicActive
+                        ? const Color(0xFF00B894).withOpacity(0.2)
+                        : Colors.orange.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _isHostMicActive
+                          ? const Color(0xFF00B894).withOpacity(0.5)
+                          : Colors.orange.withOpacity(0.5),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isHostMicActive ? Icons.mic : Icons.mic_off,
+                        color: _isHostMicActive
+                            ? const Color(0xFF00B894)
+                            : Colors.orange,
+                        size: 11,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isHostMicActive ? 'Host Mic ON' : 'Host Mic MUTED',
+                        style: TextStyle(
+                          color: _isHostMicActive
+                              ? const Color(0xFF00B894)
+                              : Colors.orange,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const Spacer(),
+
+                // Audio Mute/Unmute for User (Local stream listening toggle)
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _userAudioMuted = !_userAudioMuted;
+                    });
+                    if (_userAudioMuted) {
+                      try {
+                        _flutterTts.stop();
+                      } catch (_) {}
+                    } else if (_currentNumber != null) {
+                      _speakAnnouncement(_currentNumber!, _lastAnnouncement);
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _userAudioMuted
+                          ? Colors.grey.withOpacity(0.25)
+                          : const Color(0xFF00B894).withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _userAudioMuted
+                              ? Icons.volume_off_rounded
+                              : Icons.volume_up_rounded,
+                          color: _userAudioMuted
+                              ? Colors.grey.shade400
+                              : const Color(0xFF00B894),
+                          size: 14,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          _userAudioMuted ? 'Muted' : 'Sound ON',
+                          style: TextStyle(
+                            color: _userAudioMuted
+                                ? Colors.grey.shade400
+                                : const Color(0xFF00B894),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 6),
+
+                // Collapse/Expand toggle
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _isLiveStreamExpanded = !_isLiveStreamExpanded;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      _isLiveStreamExpanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      color: Colors.white70,
+                      size: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Main Video Area
+          if (_isLiveStreamExpanded)
+            Stack(
+              children: [
+                // Video Screen Area
+                SizedBox(
+                  height: 240,
+                  width: double.infinity,
+                  child: _buildHostVideoContent(),
+                ),
+
+                // Bottom HUD: Large Pick Up Number & Slang Announcement
+                Positioned(
+                  bottom: 10,
+                  left: 10,
+                  right: 10,
+                  child: Row(
+                    children: [
+                      // Large Pick Up Overlay
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00B894).withOpacity(0.95),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white, width: 1.5),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.4),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'PICK UP',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _currentNumber != null ? '$_currentNumber' : '--',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+
+                      // Slang Announcement Tag with Replay
+                      if (_currentNumber != null)
+                        Expanded(
+                          child: InkWell(
+                            onTap: () {
+                              if (_currentNumber != null) {
+                                _triggerHostSpeakingAnimation();
+                                _speakAnnouncement(
+                                    _currentNumber!, _lastAnnouncement);
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 9, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.75),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFFFD54F).withOpacity(0.6),
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  AnimatedBuilder(
+                                    animation: _waveAnimation,
+                                    builder: (context, child) {
+                                      return Transform.scale(
+                                        scale: _isHostSpeaking
+                                            ? _waveAnimation.value
+                                            : 1.0,
+                                        child: Icon(
+                                          _isHostSpeaking
+                                              ? Icons.volume_up_rounded
+                                              : Icons.record_voice_over_rounded,
+                                          color: const Color(0xFFFFD54F),
+                                          size: 14,
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Expanded(
+                                    child: Text(
+                                      '📢 "Pick up is $_currentNumber! ${_lastAnnouncement ?? _tambolaSlang[_currentNumber] ?? ""}"',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Color(0xFFFFD54F),
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  const Icon(
+                                    Icons.replay_rounded,
+                                    color: Color(0xFFFFD54F),
+                                    size: 13,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+
+          // Stream Info Bar below Video
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            color: const Color(0xFF1E272C),
+            child: Row(
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF00B894),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _isHostMicActive
+                        ? 'Host Live Audio Streaming (Voice Calls Active)'
+                        : 'Host Microphone Muted by Host',
+                    style: TextStyle(
+                      color: _isHostMicActive
+                          ? const Color(0xFF00B894)
+                          : Colors.orange.shade300,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (_currentNumber != null)
+                  InkWell(
+                    onTap: () {
+                      _triggerHostSpeakingAnimation();
+                      _speakAnnouncement(_currentNumber!, _lastAnnouncement);
+                    },
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.replay_rounded,
+                              size: 13, color: Color(0xFFFFD54F)),
+                          SizedBox(width: 3),
+                          Text(
+                            'Repeat Call',
+                            style: TextStyle(
+                              color: Color(0xFFFFD54F),
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHostVideoContent() {
+    // 1. If host has video toggled off
+    if (!_isHostVideoActive) {
+      return Container(
+        color: const Color(0xFF141A1E),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.06),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.videocam_off_rounded,
+                  size: 38,
+                  color: Colors.white38,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Host Camera Paused',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                _isHostMicActive
+                    ? 'Host live voice calls remain connected'
+                    : 'Host audio is also paused',
+                style: const TextStyle(color: Colors.white54, fontSize: 10.5),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 2. If actual camera frame is received from host
+    if (_lastHostCameraFrame != null) {
+      return Image.memory(
+        _lastHostCameraFrame!,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (ctx, err, stack) => _buildStudioBroadcastFallback(),
+      );
+    }
+
+    // 3. Simulated Live Host Studio Broadcast (with animated audio waves)
+    return _buildStudioBroadcastFallback();
+  }
+
+  Widget _buildStudioBroadcastFallback() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF141E30), Color(0xFF243B55)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Glowing Host Studio Avatar with pulsing ring
+            ScaleTransition(
+              scale: _pulseAnimation,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: const Color(0xFF00B894).withOpacity(0.6),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00B894).withOpacity(0.3),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.4),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.person_pin_rounded,
+                    size: 42,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            const Text(
+              'Live Host Studio Broadcast',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3,
+              ),
+            ),
+            const SizedBox(height: 3),
+            const Text(
+              'Broadcasting live video & audio to players',
+              style: TextStyle(color: Colors.white70, fontSize: 10.5),
+            ),
+            const SizedBox(height: 8),
+
+            // Real-time Sound Wave Visualizer Bars
+            if (_isHostMicActive)
+              AnimatedBuilder(
+                animation: _waveAnimation,
+                builder: (context, child) {
+                  final val = _isHostSpeaking
+                      ? _waveAnimation.value
+                      : (_waveAnimation.value * 0.4);
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildSoundBar(height: 8 + 12 * val, color: const Color(0xFF00B894)),
+                      const SizedBox(width: 3),
+                      _buildSoundBar(height: 6 + 18 * (1.1 - val * 0.6), color: const Color(0xFF00CEC9)),
+                      const SizedBox(width: 3),
+                      _buildSoundBar(height: 10 + 20 * val, color: const Color(0xFFFFD54F)),
+                      const SizedBox(width: 3),
+                      _buildSoundBar(height: 6 + 18 * (1.1 - val * 0.6), color: const Color(0xFF00CEC9)),
+                      const SizedBox(width: 3),
+                      _buildSoundBar(height: 8 + 12 * val, color: const Color(0xFF00B894)),
+                      const SizedBox(width: 6),
+                      Text(
+                        _isHostSpeaking ? '📢 Host Speaking' : '🎙️ Mic Active',
+                        style: TextStyle(
+                          color: _isHostSpeaking
+                              ? const Color(0xFFFFD54F)
+                              : const Color(0xFF00B894),
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            const SizedBox(height: 35), // space for bottom HUD
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSoundBar({required double height, required Color color}) {
+    return Container(
+      width: 3.5,
+      height: height.clamp(4.0, 32.0),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(4),
       ),
     );
   }
@@ -3096,10 +4437,16 @@ class _DrawPageState extends State<DrawPage>
     final markedCount = allNumbers.where((n) => marked.contains(n)).length;
 
     final readyForThis = analysis.readyToClaim
-        .where((r) => r.ticketIndex == ticketIndex)
+        .where((r) =>
+            r.ticketIndex == ticketIndex ||
+            (r.isMixClaim &&
+                r.contributingTickets.any((t) => t.slNo == ticket.slNo)))
         .toList();
-    final nearForThis =
-        analysis.nearWins.where((n) => n.ticketIndex == ticketIndex).toList();
+    final nearForThis = analysis.nearWins
+        .where((n) =>
+            n.ticketIndex == ticketIndex ||
+            (n.isMix && n.contributingSlNos.contains(ticket.slNo)))
+        .toList();
     final targetNumbers =
         analysis.targetNumbersPerTicket[ticketIndex] ?? <int>{};
 
@@ -3430,6 +4777,14 @@ class _DrawPageState extends State<DrawPage>
     );
   }
 
+  String _formatAwardSl(dynamic raw) {
+    if (raw == null) return '';
+    final s = raw.toString().trim();
+    if (s.isEmpty) return '';
+    if (s.startsWith('SL')) return s;
+    return 'SL #$s';
+  }
+
   Widget _buildPrizePanel(PatternAnalysisResult analysis) {
     final prizes = _drawTicket?.prizes ?? TicketModel.defaultPrizes();
     final readyPrizes = analysis.readyToClaim
@@ -3570,7 +4925,7 @@ class _DrawPageState extends State<DrawPage>
                         const SizedBox(width: 3),
                         Expanded(
                           child: Text(
-                            'Won: ${awardInfo?['winner_name'] ?? 'Player'} (SL #${awardInfo?['sl_no'] ?? ''})',
+                            'Won: ${awardInfo?['winner_name'] ?? 'Player'} (${_formatAwardSl(awardInfo?['sl_no'])})',
                             style: TextStyle(
                               fontSize: 10,
                               color: Colors.grey.shade700,
@@ -3725,6 +5080,11 @@ class ClaimValidationResult {
   final List<int> requiredNumbers;
   final List<int> missingNumbers;
   final String explanation;
+  final bool isMixClaim;
+  final List<TicketPurchaseModel> contributingTickets;
+  final String contributingSlNos;
+  final Map<int, List<int>> numbersPerTicket;
+  final int totalMarkedCount;
 
   ClaimValidationResult({
     required this.isValid,
@@ -3733,6 +5093,11 @@ class ClaimValidationResult {
     required this.requiredNumbers,
     required this.missingNumbers,
     required this.explanation,
+    this.isMixClaim = false,
+    this.contributingTickets = const [],
+    this.contributingSlNos = '',
+    this.numbersPerTicket = const {},
+    this.totalMarkedCount = 0,
   });
 }
 
@@ -3743,6 +5108,9 @@ class NearWinAlert {
   final int missingNumber;
   final String patternType;
   final String message;
+  final bool isMix;
+  final List<int> contributingSlNos;
+  final String mixTicketsDisplay;
 
   NearWinAlert({
     required this.prizeName,
@@ -3751,6 +5119,9 @@ class NearWinAlert {
     required this.missingNumber,
     required this.patternType,
     required this.message,
+    this.isMix = false,
+    this.contributingSlNos = const [],
+    this.mixTicketsDisplay = '',
   });
 }
 
@@ -3761,6 +5132,10 @@ class ReadyToClaimAlert {
   final TicketPurchaseModel ticket;
   final String patternType;
   final String message;
+  final bool isMixClaim;
+  final List<TicketPurchaseModel> contributingTickets;
+  final String contributingSlNos;
+  final int totalMarkedCount;
 
   ReadyToClaimAlert({
     required this.prize,
@@ -3769,6 +5144,10 @@ class ReadyToClaimAlert {
     required this.ticket,
     required this.patternType,
     required this.message,
+    this.isMixClaim = false,
+    this.contributingTickets = const [],
+    this.contributingSlNos = '',
+    this.totalMarkedCount = 0,
   });
 }
 

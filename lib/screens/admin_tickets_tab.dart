@@ -2248,6 +2248,7 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
 
   // Editable Prizes List
   late List<PrizeItem> _prizes;
+  final ScrollController _prizesScrollController = ScrollController();
 
   bool get isEdit => widget.ticketToEdit != null;
 
@@ -2288,6 +2289,7 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
     _dateController.dispose();
     _timeController.dispose();
     _priceController.dispose();
+    _prizesScrollController.dispose();
     super.dispose();
   }
 
@@ -2363,6 +2365,15 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
   void _addPrizeTier() {
     setState(() {
       _prizes.add(PrizeItem(name: 'Bonus Prize', price: '₹1000'));
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_prizesScrollController.hasClients) {
+        _prizesScrollController.animateTo(
+          _prizesScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 
@@ -2483,89 +2494,98 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.90,
-      ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Column(
-        children: [
-          // Drag Handle & Header
-          Container(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(28)),
-              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Column(
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: AppColors.primaryGreen.withOpacity(0.1),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.confirmation_number_rounded,
-                              color: AppColors.primaryGreen,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              isEdit
-                                  ? 'Edit Draw Ticket'
-                                  : 'Create New Draw Ticket',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.primaryGreen,
-                              ),
-                            ),
-                          ),
-                        ],
+    final mediaQuery = MediaQuery.of(context);
+    final bottomInset = mediaQuery.viewInsets.bottom;
+    final availableHeight = mediaQuery.size.height - bottomInset;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: (mediaQuery.size.height * 0.90)
+              .clamp(200.0, availableHeight > 200.0 ? availableHeight : 200.0),
+        ),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            // Drag Handle & Header
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(28)),
+                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: Column(
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-              ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryGreen.withValues(alpha: 0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.confirmation_number_rounded,
+                                color: AppColors.primaryGreen,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                isEdit
+                                    ? 'Edit Draw Ticket'
+                                    : 'Create New Draw Ticket',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.primaryGreen,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
 
-          // Scrollable Form
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Form(
+            // Scrollable Form
+            Expanded(
+              child: SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: const EdgeInsets.all(20),
+                child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2758,7 +2778,7 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
                               ),
                             ),
                             Text(
-                              'Total: $_formattedPool',
+                              'Total: $_formattedPool (${_prizes.length} ${_prizes.length == 1 ? "tier" : "tiers"})',
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
@@ -2781,7 +2801,7 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
                           ),
                           style: TextButton.styleFrom(
                             backgroundColor:
-                                AppColors.primaryGreen.withOpacity(0.08),
+                                AppColors.primaryGreen.withValues(alpha: 0.08),
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 10, vertical: 4),
                             shape: RoundedRectangleBorder(
@@ -2794,89 +2814,109 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
 
                     const SizedBox(height: 10),
 
-                    // List of Editable Prize Rows
+                    // Scrollable List of Editable Prize Rows
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      constraints: const BoxConstraints(
+                        maxHeight: 220,
+                      ),
+                      padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
                       decoration: BoxDecoration(
                         color: const Color(0xFFF9FAFB),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(color: Colors.grey.shade200),
                       ),
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _prizes.length,
-                        separatorBuilder: (context, i) =>
-                            const Divider(height: 12),
-                        itemBuilder: (context, index) {
-                          final item = _prizes[index];
-                          return Row(
-                            children: [
-                              // Prize Name Input
-                              Expanded(
-                                flex: 3,
-                                child: TextFormField(
-                                  initialValue: item.name,
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600),
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 10),
-                                    hintText: 'Prize Name',
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide(
-                                          color: Colors.grey.shade300),
+                      child: Scrollbar(
+                        controller: _prizesScrollController,
+                        thumbVisibility: true,
+                        radius: const Radius.circular(8),
+                        child: ListView.separated(
+                          controller: _prizesScrollController,
+                          shrinkWrap: true,
+                          physics: const AlwaysScrollableScrollPhysics(
+                            parent: BouncingScrollPhysics(),
+                          ),
+                          padding: const EdgeInsets.only(right: 6),
+                          itemCount: _prizes.length,
+                          separatorBuilder: (context, i) =>
+                              const Divider(height: 12),
+                          itemBuilder: (context, index) {
+                            final item = _prizes[index];
+                            return KeyedSubtree(
+                              key: ObjectKey(item),
+                              child: Row(
+                                children: [
+                                  // Prize Name Input
+                                  Expanded(
+                                    flex: 3,
+                                    child: TextFormField(
+                                      initialValue: item.name,
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600),
+                                      decoration: InputDecoration(
+                                        isDense: true,
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                                horizontal: 10, vertical: 10),
+                                        hintText: 'Prize Name',
+                                        border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          borderSide: BorderSide(
+                                              color: Colors.grey.shade300),
+                                        ),
+                                      ),
+                                      onChanged: (val) {
+                                        item.name = val;
+                                      },
                                     ),
                                   ),
-                                  onChanged: (val) {
-                                    item.name = val;
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              // Prize Price Input
-                              Expanded(
-                                flex: 2,
-                                child: TextFormField(
-                                  initialValue: item.price,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primaryGreen,
-                                  ),
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 10),
-                                    hintText: '₹ Amount',
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      borderSide: BorderSide(
-                                          color: Colors.grey.shade300),
+                                  const SizedBox(width: 8),
+                                  // Prize Price Input
+                                  Expanded(
+                                    flex: 2,
+                                    child: TextFormField(
+                                      initialValue: item.price,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppColors.primaryGreen,
+                                      ),
+                                      decoration: InputDecoration(
+                                        isDense: true,
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                                horizontal: 10, vertical: 10),
+                                        hintText: '₹ Amount',
+                                        border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          borderSide: BorderSide(
+                                              color: Colors.grey.shade300),
+                                        ),
+                                      ),
+                                      onChanged: (val) {
+                                        setState(() {
+                                          item.price = val.startsWith('₹')
+                                              ? val
+                                              : '₹$val';
+                                        });
+                                      },
                                     ),
                                   ),
-                                  onChanged: (val) {
-                                    setState(() {
-                                      item.price =
-                                          val.startsWith('₹') ? val : '₹$val';
-                                    });
-                                  },
-                                ),
+                                  IconButton(
+                                    icon: const Icon(Icons.remove_circle_outline,
+                                        color: Colors.red, size: 20),
+                                    onPressed: () => _removePrizeTier(index),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                        minWidth: 32, minHeight: 32),
+                                  ),
+                                ],
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.remove_circle_outline,
-                                    color: Colors.red, size: 20),
-                                onPressed: () => _removePrizeTier(index),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                    minWidth: 32, minHeight: 32),
-                              ),
-                            ],
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
                     ),
 
@@ -2935,8 +2975,9 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildFieldLabel(String label) {
     return Padding(

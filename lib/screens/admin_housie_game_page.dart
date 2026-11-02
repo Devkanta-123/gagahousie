@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -62,7 +65,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   bool _isVideoActive = true;
   bool _isMicActive = true;
   Timer? _liveDurationTimer;
+  Timer? _liveStreamSyncTimer;
   int _liveElapsedSeconds = 0;
+  bool _isCapturingFrame = false;
 
   // Manual Mode Quick Input
   final TextEditingController _manualInputController = TextEditingController();
@@ -227,6 +232,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     if (_activeMode == HousieGameMode.realLive) {
       _initCamera();
       _startLiveTimer();
+      _startLiveStreamSyncTimer();
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) _broadcastLiveState();
+      });
     }
   }
 
@@ -273,6 +282,22 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _broadcastChannel?.onBroadcast(
         event: 'prize_claim_submitted',
         callback: (payload) => _onClaimReceived(payload),
+      );
+
+      // Listen for player live stream sync request
+      _broadcastChannel?.onBroadcast(
+        event: 'request_live_state',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid = widget.ticket.ticketId.replaceAll('#', '').trim();
+          if (cleanTid.isEmpty || cleanTid == currentTid) {
+            _broadcastLiveState();
+            if (_activeMode == HousieGameMode.realLive && _isCameraReady && _isVideoActive) {
+              _captureAndBroadcastFrame();
+            }
+          }
+        },
       );
 
       _broadcastChannel?.subscribe((status, error) {
@@ -362,7 +387,317 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
   }
 
+  bool _isQuick10Prize(String prizeName) {
+    final p = prizeName.toLowerCase().trim();
+    return p.contains('quick 10') ||
+        p.contains('quick10') ||
+        p.contains('quick ten') ||
+        p.contains('3 ticket') ||
+        p.contains('three ticket') ||
+        p.contains('3 tickets') ||
+        p.contains('three tickets') ||
+        p.contains('mix quick') ||
+        p.contains('quick mix') ||
+        (p.contains('quick') && p.contains('10'));
+  }
+
+  bool _isQuick5Prize(String prizeName) {
+    if (_isQuick10Prize(prizeName)) return false;
+    final p = prizeName.toLowerCase().trim();
+    return p.contains('quick 5') ||
+        p.contains('quick5') ||
+        p.contains('quick five') ||
+        p.contains('early 5') ||
+        p.contains('early five') ||
+        p.contains('five') ||
+        p.contains('quick');
+  }
+
+  String _formatAwardSl(dynamic raw) {
+    if (raw == null) return '';
+    final s = raw.toString().trim();
+    if (s.isEmpty) return '';
+    if (s.startsWith('SL')) return s;
+    return 'SL #$s';
+  }
+
+  Widget _buildTambolaTicketPreviewGrid({
+    required List<List<int?>> grid,
+    required Set<int> calledNumbers,
+    int? slNo,
+    String? serialNumber,
+    int? matchedCount,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: (matchedCount != null && matchedCount > 0)
+              ? const Color(0xFF00B894).withOpacity(0.5)
+              : Colors.grey.shade300,
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (slNo != null) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6366F1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'SL #$slNo',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    if (serialNumber != null && serialNumber.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        serialNumber,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (matchedCount != null)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00B894).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF00B894).withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.check_circle_rounded,
+                            color: Color(0xFF00B894), size: 12),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$matchedCount Marked',
+                          style: const TextStyle(
+                            color: Color(0xFF00896F),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
+          // 3x9 Matrix
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Column(
+              children: List.generate(3, (rIdx) {
+                final rowList =
+                    rIdx < grid.length ? grid[rIdx] : List<int?>.filled(9, null);
+                return Padding(
+                  padding: EdgeInsets.only(bottom: rIdx < 2 ? 3.0 : 0.0),
+                  child: Row(
+                    children: List.generate(9, (cIdx) {
+                      final val = cIdx < rowList.length ? rowList[cIdx] : null;
+                      final isCalled =
+                          val != null && calledNumbers.contains(val);
+                      return Expanded(
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: val == null
+                                ? Colors.transparent
+                                : (isCalled
+                                    ? const Color(0xFF00B894)
+                                    : Colors.white),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: val == null
+                                  ? Colors.transparent
+                                  : (isCalled
+                                      ? const Color(0xFF00896F)
+                                      : Colors.grey.shade300),
+                              width: isCalled ? 1.2 : 0.8,
+                            ),
+                            boxShadow: isCalled
+                                ? [
+                                    BoxShadow(
+                                      color: const Color(0xFF00B894)
+                                          .withOpacity(0.35),
+                                      blurRadius: 3,
+                                      offset: const Offset(0, 1),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: Center(
+                            child: Text(
+                              val == null ? '' : '$val',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: isCalled ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Map<String, dynamic> _verifyTicketForClaim(Map<String, dynamic> claim) {
+    final pName = (claim['prize_name']?.toString() ?? '').toLowerCase().trim();
+    final bool isMix = claim['is_mix_claim'] == true || _isQuick10Prize(pName);
+
+    if (isMix) {
+      // MULTI-TICKET / MIX CLAIM VERIFICATION
+      final List<Map<String, dynamic>> verifiedMixTickets = [];
+      int totalCalledCount = 0;
+      final List<int> allCalledNumbers = [];
+
+      // 1. Check if mix_tickets was sent in claim payload
+      if (claim['mix_tickets'] != null && claim['mix_tickets'] is List) {
+        for (final item in (claim['mix_tickets'] as List)) {
+          if (item is Map) {
+            final tMap = Map<String, dynamic>.from(item);
+            final rawData = tMap['ticket_data'];
+            List<List<int?>>? grid;
+            if (rawData is List) {
+              grid = rawData.map((row) {
+                if (row is List) {
+                  return row
+                      .map((c) => c == null ? null : int.tryParse(c.toString()))
+                      .toList();
+                }
+                return List<int?>.filled(9, null);
+              }).toList();
+            }
+            final all15 = grid != null
+                ? grid.expand((r) => r).whereType<int>().toList()
+                : <int>[];
+            final called =
+                all15.where((n) => _calledNumbers.contains(n)).toList();
+            final sl = tMap['sl_no']?.toString() ?? '';
+            final sn = tMap['serial_number']?.toString() ?? '';
+
+            verifiedMixTickets.add({
+              'sl_no': sl,
+              'serial_number': sn,
+              'grid': grid ?? List.generate(3, (_) => List<int?>.filled(9, null)),
+              'matched_numbers': called,
+              'matched_count': called.length,
+            });
+            totalCalledCount += called.length;
+            allCalledNumbers.addAll(called);
+          }
+        }
+      }
+
+      // 2. If mix_tickets is empty, parse SL numbers from claim['sl_no'] and check against _tambolaTickets
+      if (verifiedMixTickets.isEmpty) {
+        final slString = claim['sl_no']?.toString() ?? '';
+        final slParts = slString
+            .replaceAll('SL', '')
+            .replaceAll('#', '')
+            .split(RegExp(r'[, ]+'))
+            .where((s) => s.isNotEmpty)
+            .map((s) => int.tryParse(s))
+            .whereType<int>()
+            .toList();
+
+        for (final sl in slParts) {
+          final matches = _tambolaTickets.where((t) => t.slNo == sl);
+          if (matches.isNotEmpty) {
+            final t = matches.first;
+            final all15 =
+                t.ticketData.expand((r) => r).whereType<int>().toList();
+            final called =
+                all15.where((n) => _calledNumbers.contains(n)).toList();
+            verifiedMixTickets.add({
+              'sl_no': '$sl',
+              'serial_number': t.serialNumber,
+              'grid': t.ticketData,
+              'matched_numbers': called,
+              'matched_count': called.length,
+            });
+            totalCalledCount += called.length;
+            allCalledNumbers.addAll(called);
+          }
+        }
+      }
+
+      const int targetCount = 10;
+      final bool isValid = totalCalledCount >= targetCount;
+      final int needed = targetCount - totalCalledCount;
+
+      final summary = verifiedMixTickets
+          .map((t) => 'SL #${t['sl_no']} (${t['matched_count']} marked)')
+          .join(', ');
+      final explanation = isValid
+          ? 'Valid Quick 10 Claim: $totalCalledCount/10 numbers called across tickets ($summary)!'
+          : 'Bogey Claim: Only $totalCalledCount/10 numbers called across tickets ($summary). Needs $needed more.';
+
+      return {
+        'isValid': isValid,
+        'isMix': true,
+        'missing': <int>[],
+        'required': allCalledNumbers,
+        'totalCalled': totalCalledCount,
+        'targetCount': targetCount,
+        'mix_tickets': verifiedMixTickets,
+        'grid': verifiedMixTickets.isNotEmpty
+            ? verifiedMixTickets.first['grid']
+            : List.generate(3, (_) => List<int?>.filled(9, null)),
+        'explanation': explanation,
+      };
+    }
+
+    // SINGLE TICKET VERIFICATION
     List<List<int?>>? grid;
     if (claim['ticket_data'] != null && claim['ticket_data'] is List) {
       grid = (claim['ticket_data'] as List).map((row) {
@@ -388,6 +723,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     if (grid == null || grid.length < 3) {
       return {
         'isValid': false,
+        'isMix': false,
         'missing': <int>[],
         'required': <int>[],
         'grid': List.generate(3, (_) => List<int?>.filled(9, null)),
@@ -395,7 +731,6 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       };
     }
 
-    final pName = (claim['prize_name']?.toString() ?? '').toLowerCase();
     final row0 = grid[0].whereType<int>().toList();
     final row1 = grid[1].whereType<int>().toList();
     final row2 = grid[2].whereType<int>().toList();
@@ -413,7 +748,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       explanation = isValid
           ? 'All 15 numbers on the ticket have been called by caller!'
           : 'Missing ${missing.length} number(s): ${missing.join(", ")}';
-    } else if (pName.contains('quick') || pName.contains('five')) {
+    } else if (_isQuick5Prize(pName)) {
       final called = all15.where((n) => _calledNumbers.contains(n)).toList();
       required = all15;
       isValid = called.length >= 5;
@@ -467,6 +802,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
     return {
       'isValid': isValid,
+      'isMix': false,
       'missing': missing,
       'required': required,
       'grid': grid,
@@ -477,12 +813,14 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   Future<void> _approveWinner(Map<String, dynamic> claim) async {
     final pName = claim['prize_name']?.toString() ?? 'Prize';
     final uName = claim['user_name']?.toString() ?? 'Player';
-    final sl = claim['sl_no'] is int
-        ? claim['sl_no']
-        : int.tryParse(claim['sl_no']?.toString() ?? '1') ?? 1;
+    final rawSl = claim['sl_no'];
+    final sl = (rawSl != null && rawSl.toString().trim().isNotEmpty)
+        ? rawSl.toString().trim()
+        : '1';
     final sn = claim['serial_number']?.toString() ?? '';
     final pAmount = claim['prize_amount']?.toString() ?? '';
     final uId = claim['user_id'];
+    final isMix = claim['is_mix_claim'] == true || _isQuick10Prize(pName);
 
     final awardRecord = {
       'prize_name': pName,
@@ -491,6 +829,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       'serial_number': sn,
       'prize_amount': pAmount,
       'user_id': uId,
+      'is_mix_claim': isMix,
       'awarded_at': DateTime.now().toIso8601String(),
     };
 
@@ -1391,7 +1730,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      'Winner: ${award?['winner_name'] ?? 'Pending Claim'} (SL #${award?['sl_no'] ?? '-'})',
+                                      'Winner: ${award?['winner_name'] ?? 'Pending Claim'} (${_formatAwardSl(award?['sl_no'])})',
                                       style: TextStyle(
                                         fontSize: 11.5,
                                         fontWeight: FontWeight.w600,
@@ -1573,6 +1912,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                             ),
                           )
                         : ListView.separated(
+                            physics: const BouncingScrollPhysics(),
                             padding: const EdgeInsets.all(16),
                             itemCount: claimsToShow.length,
                             separatorBuilder: (_, __) =>
@@ -1590,8 +1930,11 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                                   claim['prize_amount']?.toString() ?? '';
 
                               final verifyRes = _verifyTicketForClaim(claim);
-                              final isValid =
-                                  verifyRes['isValid'] == true;
+                              final isValid = verifyRes['isValid'] == true;
+                              final isMix = verifyRes['isMix'] == true;
+                              final mixTickets =
+                                  (verifyRes['mix_tickets'] as List<Map<String, dynamic>>?) ??
+                                      [];
                               final missing =
                                   (verifyRes['missing'] as List<int>?) ?? [];
                               final grid =
@@ -1641,7 +1984,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                                                     BorderRadius.circular(6),
                                               ),
                                               child: Text(
-                                                'SL #$sl',
+                                                isMix ? 'MIX SL #$sl' : 'SL #$sl',
                                                 style: const TextStyle(
                                                   color: Colors.white,
                                                   fontWeight: FontWeight.bold,
@@ -1690,72 +2033,84 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                                     ),
                                     const SizedBox(height: 10),
 
-                                    // Ticket Grid Preview
-                                    if (grid.length >= 3) ...[
+                                    // Ticket Grid Preview or Mix Tickets Breakdown
+                                    if (isMix && mixTickets.isNotEmpty) ...[
                                       Container(
-                                        padding: const EdgeInsets.all(6),
+                                        padding: const EdgeInsets.all(10),
                                         decoration: BoxDecoration(
-                                          color: Colors.grey.shade50,
-                                          borderRadius:
-                                              BorderRadius.circular(10),
-                                          border: Border.all(
-                                              color: Colors.grey.shade200),
+                                          color: const Color(0xFF6366F1).withOpacity(0.06),
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.2)),
                                         ),
                                         child: Column(
-                                          children: List.generate(3, (rIdx) {
-                                            return Padding(
-                                              padding: const EdgeInsets.only(
-                                                  bottom: 3),
-                                              child: Row(
-                                                children: List.generate(9,
-                                                    (cIdx) {
-                                                  final val =
-                                                      grid[rIdx][cIdx];
-                                                  final isCalled = val !=
-                                                          null &&
-                                                      _calledNumbers
-                                                          .contains(val);
-                                                  return Expanded(
-                                                    child: Container(
-                                                      margin:
-                                                          const EdgeInsets.symmetric(
-                                                              horizontal: 1.5),
-                                                      height: 24,
-                                                      decoration:
-                                                          BoxDecoration(
-                                                        color: val == null
-                                                            ? Colors.transparent
-                                                            : (isCalled
-                                                                ? const Color(
-                                                                    0xFF00B894)
-                                                                : Colors.grey
-                                                                    .shade200),
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                                4),
-                                                      ),
-                                                      child: Center(
-                                                        child: Text(
-                                                          val == null
-                                                              ? ''
-                                                              : '$val',
-                                                          style: TextStyle(
-                                                            fontSize: 9,
-                                                            fontWeight:
-                                                                FontWeight.bold,
-                                                            color: isCalled
-                                                                ? Colors.white
-                                                                : Colors.black87,
-                                                          ),
-                                                        ),
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Row(
+                                                  children: [
+                                                    const Icon(Icons.style_rounded, size: 16, color: Color(0xFF4F46E5)),
+                                                    const SizedBox(width: 6),
+                                                    Text(
+                                                      'Mix Tickets Breakdown (${verifyRes['totalCalled']}/10 Marked)',
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: Color(0xFF4F46E5),
                                                       ),
                                                     ),
-                                                  );
-                                                }),
+                                                  ],
+                                                ),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    color: isValid ? const Color(0xFF00B894) : Colors.orange,
+                                                    borderRadius: BorderRadius.circular(6),
+                                                  ),
+                                                  child: Text(
+                                                    isValid ? 'TARGET MET' : '${verifyRes['totalCalled']}/10 MARKED',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 10,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 10),
+                                            for (final t in mixTickets) ...[
+                                              _buildTambolaTicketPreviewGrid(
+                                                grid: (t['grid'] as List).map((row) {
+                                                  if (row is List) {
+                                                    return row
+                                                        .map((c) => c == null ? null : int.tryParse(c.toString()))
+                                                        .toList();
+                                                  }
+                                                  return List<int?>.filled(9, null);
+                                                }).toList(),
+                                                calledNumbers: _calledNumbers.toSet(),
+                                                slNo: int.tryParse(t['sl_no']?.toString() ?? ''),
+                                                serialNumber: t['serial_number']?.toString(),
+                                                matchedCount: t['matched_count'] as int?,
                                               ),
-                                            );
-                                          }),
+                                            ],
+                                          ],
                                         ),
+                                      ),
+                                      const SizedBox(height: 10),
+                                    ] else if (grid.length >= 3) ...[
+                                      _buildTambolaTicketPreviewGrid(
+                                        grid: grid,
+                                        calledNumbers: _calledNumbers.toSet(),
+                                        slNo: int.tryParse(sl),
+                                        serialNumber: sn,
+                                        matchedCount: grid
+                                            .expand((r) => r)
+                                            .whereType<int>()
+                                            .where((n) => _calledNumbers.contains(n))
+                                            .length,
                                       ),
                                       const SizedBox(height: 10),
                                     ],
@@ -1791,8 +2146,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                                           Expanded(
                                             child: Text(
                                               isValid
-                                                  ? '✅ 100% VALID CLAIM: All required numbers have been called by host!'
-                                                  : '⚠️ BOGEY CLAIM: Missing numbers: ${missing.join(", ")}',
+                                                  ? (isMix
+                                                      ? '✅ 100% VALID CLAIM: ${verifyRes['explanation']}'
+                                                      : '✅ 100% VALID CLAIM: All required numbers have been called by host!')
+                                                  : (isMix
+                                                      ? '⚠️ BOGEY CLAIM: ${verifyRes['explanation']}'
+                                                      : '⚠️ BOGEY CLAIM: Missing numbers: ${missing.join(", ")}'),
                                               style: TextStyle(
                                                 fontSize: 11.5,
                                                 fontWeight: FontWeight.bold,
@@ -1903,6 +2262,11 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             'current_number': number,
             'announcement': announcement,
             'timestamp': DateTime.now().millisecondsSinceEpoch,
+            'mode': _activeMode.name,
+            'is_live': _activeMode == HousieGameMode.realLive,
+            'is_video_active': _isVideoActive,
+            'is_mic_active': _isMicActive,
+            'live_elapsed_seconds': _liveElapsedSeconds,
           },
         );
       }
@@ -1998,14 +2362,20 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         try {
           await WalletService.instance.createNotification(
             userId: uid,
-            title: '🎯 Housie Draw Started!',
-            message:
-                'The draw for $ticketTitle (Draw #$cleanId) has officially started! Check your numbers now.',
-            type: 'draw_started',
+            title: _activeMode == HousieGameMode.realLive
+                ? '🎥 Tambola Live Draw Started!'
+                : '🎯 Housie Draw Started!',
+            message: _activeMode == HousieGameMode.realLive
+                ? 'The host is broadcasting LIVE video & audio for $ticketTitle! Tap to watch and play.'
+                : 'The draw for $ticketTitle (Draw #$cleanId) has officially started! Check your numbers now.',
+            type: _activeMode == HousieGameMode.realLive
+                ? 'live_draw'
+                : 'draw_started',
             metadata: {
               'ticket_id': cleanId,
               'ticket_title': ticketTitle,
               'mode': _activeMode.name,
+              'is_live': _activeMode == HousieGameMode.realLive,
             },
           );
         } catch (e) {
@@ -2017,12 +2387,20 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       final payload = {
         'ticket_id': cleanId,
         'ticket_title': ticketTitle,
-        'title': '🎯 Housie Draw Started!',
-        'message':
-            'The draw for $ticketTitle has officially started! Check your numbers now.',
+        'title': _activeMode == HousieGameMode.realLive
+            ? '🎥 Tambola Live Draw Started!'
+            : '🎯 Housie Draw Started!',
+        'message': _activeMode == HousieGameMode.realLive
+            ? 'The host is broadcasting LIVE video & audio for $ticketTitle! Tap to watch and play.'
+            : 'The draw for $ticketTitle has officially started! Check your numbers now.',
         'user_ids': buyerUserIds.map((id) => id.toString()).toList(),
         'buyer_emails': buyerEmails.toList(),
         'notification_id': DateTime.now().millisecondsSinceEpoch,
+        'mode': _activeMode.name,
+        'is_live': _activeMode == HousieGameMode.realLive,
+        'is_video_active': _isVideoActive,
+        'is_mic_active': _isMicActive,
+        'live_elapsed_seconds': _liveElapsedSeconds,
       };
 
       if (_broadcastChannel != null) {
@@ -2034,7 +2412,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             '✅ [DRAW START NOTIFICATION] Realtime broadcast sent for draw #$cleanId');
       } else if (client != null) {
         final ch = client.channel('gaga_broadcast_feed');
-        await ch.subscribe();
+        ch.subscribe();
         await ch.sendBroadcastMessage(
           event: 'draw_started',
           payload: payload,
@@ -2047,6 +2425,21 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
   @override
   void dispose() {
+    _liveStreamSyncTimer?.cancel();
+    if (_activeMode == HousieGameMode.realLive) {
+      try {
+        final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
+        _broadcastChannel?.sendBroadcastMessage(
+          event: 'live_stream_update',
+          payload: {
+            'ticket_id': cleanId,
+            'is_live': false,
+            'mode': _activeMode.name,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      } catch (_) {}
+    }
     _broadcastChannel?.unsubscribe();
     try {
       _flutterTts.stop();
@@ -2058,6 +2451,94 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     _pulseController.dispose();
     _manualInputController.dispose();
     super.dispose();
+  }
+
+  void _startLiveStreamSyncTimer() {
+    _liveStreamSyncTimer?.cancel();
+    _liveStreamSyncTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted) return;
+      if (_activeMode == HousieGameMode.realLive) {
+        _broadcastLiveState();
+        if (_isCameraReady && _isVideoActive && !_isCapturingFrame) {
+          _captureAndBroadcastFrame();
+        }
+      }
+    });
+  }
+
+  Future<void> _broadcastLiveState() async {
+    try {
+      final client = SupabaseService.instance.client;
+      if (client != null && _broadcastChannel != null) {
+        final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
+        await _broadcastChannel!.sendBroadcastMessage(
+          event: 'live_stream_update',
+          payload: {
+            'ticket_id': cleanId,
+            'is_live': _activeMode == HousieGameMode.realLive,
+            'mode': _activeMode.name,
+            'is_video_active': _isVideoActive,
+            'is_mic_active': _isMicActive,
+            'live_elapsed_seconds': _liveElapsedSeconds,
+            'current_number': _currentNumber,
+            'announcement': _lastAnnouncementText,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ [BROADCAST LIVE STATE ERROR] $e');
+    }
+  }
+
+  Future<void> _captureAndBroadcastFrame() async {
+    if (!_isCameraReady ||
+        _cameraController == null ||
+        !_cameraController!.value.isInitialized ||
+        !_isVideoActive ||
+        _isCapturingFrame) {
+      return;
+    }
+    _isCapturingFrame = true;
+    try {
+      final xFile = await _cameraController!.takePicture();
+      final bytes = await xFile.readAsBytes();
+      Uint8List? compressedBytes;
+      if (bytes.length > 90000) {
+        compressedBytes = await _scaleDownImage(bytes, targetWidth: 320);
+      } else {
+        compressedBytes = bytes;
+      }
+
+      if (compressedBytes != null && compressedBytes.length < 130000 && mounted) {
+        final b64 = base64Encode(compressedBytes);
+        final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
+        _broadcastChannel?.sendBroadcastMessage(
+          event: 'host_camera_frame',
+          payload: {
+            'ticket_id': cleanId,
+            'frame': b64,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        );
+      }
+    } catch (e) {
+      debugPrint('📹 [FRAME CAPTURE NOTICE] $e');
+    } finally {
+      _isCapturingFrame = false;
+    }
+  }
+
+  Future<Uint8List?> _scaleDownImage(Uint8List data, {int targetWidth = 320}) async {
+    try {
+      final codec = await ui.instantiateImageCodec(data, targetWidth: targetWidth);
+      final frameInfo = await codec.getNextFrame();
+      final byteData =
+          await frameInfo.image.toByteData(format: ui.ImageByteFormat.png);
+      return byteData?.buffer.asUint8List();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _initTts() async {
@@ -2196,6 +2677,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             _isCameraReady = true;
             _isCameraInitializing = false;
           });
+          _broadcastLiveState();
+          _captureAndBroadcastFrame();
         }
       } else {
         if (mounted) {
@@ -2297,6 +2780,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           _isCameraReady = true;
           _isCameraInitializing = false;
         });
+        _broadcastLiveState();
+        _captureAndBroadcastFrame();
 
         final lensName = targetCam.lensDirection == CameraLensDirection.front
             ? 'Front Camera'
@@ -2330,6 +2815,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     setState(() {
       _isMicActive = !_isMicActive;
     });
+    _broadcastLiveState();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(_isMicActive
@@ -2345,6 +2831,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     setState(() {
       _isVideoActive = !_isVideoActive;
     });
+    _broadcastLiveState();
   }
 
   void _startLiveTimer() {
@@ -2395,6 +2882,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _countdown = _intervalSeconds;
     });
 
+    if (_isAutoRunning) {
+      _restartCountdownTimer();
+    }
+
     _broadcastNumber(next, announcementText: text);
     _syncDrawStateToDb();
     if (!_hasSentStartNotification) {
@@ -2404,6 +2895,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
     // Voice announcement for every new pick up
     _announceNumber(next);
+
+    if (_activeMode == HousieGameMode.realLive) {
+      _captureAndBroadcastFrame();
+    }
   }
 
   void _markNumber(int number) {
@@ -2444,7 +2939,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         _remainingNumbers.remove(number);
         _currentNumber = number;
         _lastAnnouncementText = text;
+        _countdown = _intervalSeconds;
       });
+
+      if (_isAutoRunning) {
+        _restartCountdownTimer();
+      }
 
       _broadcastNumber(number, announcementText: text);
       _syncDrawStateToDb();
@@ -2455,6 +2955,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
       // Voice announcement for newly marked pick up
       _announceNumber(number);
+
+      if (_activeMode == HousieGameMode.realLive) {
+        _captureAndBroadcastFrame();
+      }
     }
   }
 
@@ -2571,11 +3075,22 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
     if (_currentNumber == null) {
       _drawNextNumber();
+    } else {
+      _restartCountdownTimer();
     }
+  }
 
+  void _restartCountdownTimer() {
     _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) return;
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      if (!_isAutoRunning) {
+        t.cancel();
+        return;
+      }
       if (_countdown > 1) {
         setState(() {
           _countdown--;
@@ -2595,8 +3110,68 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     if (mounted) {
       setState(() {
         _isAutoRunning = false;
+        _countdown = _intervalSeconds;
       });
     }
+  }
+
+  void _changeSpeed(int sec) {
+    setState(() {
+      _intervalSeconds = sec;
+      _countdown = sec;
+    });
+    if (_isAutoRunning) {
+      _restartCountdownTimer();
+    }
+  }
+
+  Widget _buildSpeedSelectorWidget({bool isDarkTheme = true}) {
+    final textColor = isDarkTheme ? Colors.white70 : Colors.grey.shade700;
+    final unselectedBg =
+        isDarkTheme ? Colors.white.withOpacity(0.12) : Colors.grey.shade200;
+    final unselectedText = isDarkTheme ? Colors.white : Colors.grey.shade800;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          'Speed: ',
+          style: TextStyle(
+              color: textColor, fontSize: 11, fontWeight: FontWeight.w600),
+        ),
+        for (final sec in [3, 5, 8, 10]) ...[
+          InkWell(
+            onTap: () => _changeSpeed(sec),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+              decoration: BoxDecoration(
+                color: _intervalSeconds == sec
+                    ? const Color(0xFF00B894)
+                    : unselectedBg,
+                borderRadius: BorderRadius.circular(8),
+                border: _intervalSeconds == sec
+                    ? Border.all(color: Colors.white, width: 1)
+                    : null,
+              ),
+              child: Text(
+                '${sec}s',
+                style: TextStyle(
+                  color:
+                      _intervalSeconds == sec ? Colors.white : unselectedText,
+                  fontSize: 11,
+                  fontWeight: _intervalSeconds == sec
+                      ? FontWeight.bold
+                      : FontWeight.normal,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
   }
 
   void _showGameOverDialog() {
@@ -3401,7 +3976,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               ),
               const SizedBox(width: 8),
 
-              // Force Next Number Button
+              // Force Next Number Button (Advance Pick)
               Expanded(
                 flex: 2,
                 child: OutlinedButton.icon(
@@ -3422,12 +3997,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   icon: Icon(
                       _isDrawCompleted
                           ? Icons.lock_outline_rounded
-                          : Icons.skip_next_rounded,
+                          : Icons.fast_forward_rounded,
                       size: 18),
                   label: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      _isDrawCompleted ? 'Locked' : 'Next Now',
+                      _isDrawCompleted ? 'Locked' : 'Next Advance',
                       style: const TextStyle(
                           fontSize: 11.5, fontWeight: FontWeight.bold),
                     ),
@@ -3439,48 +4014,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
           const SizedBox(height: 8),
 
-          // Interval Speed Selector
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text(
-                'Speed: ',
-                style: TextStyle(color: Colors.white70, fontSize: 11),
-              ),
-              for (final sec in [3, 5, 8, 10]) ...[
-                InkWell(
-                  onTap: () {
-                    setState(() {
-                      _intervalSeconds = sec;
-                      _countdown = sec;
-                    });
-                  },
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: _intervalSeconds == sec
-                          ? const Color(0xFF00B894)
-                          : Colors.white.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${sec}s',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: _intervalSeconds == sec
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
+          // Interval Speed Selector (up to 10s)
+          _buildSpeedSelectorWidget(isDarkTheme: true),
         ],
       ),
     );
@@ -3688,56 +4223,157 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             ],
           ),
 
-          // Host Action Panel below Video
+          // Host Action Panel below Video with Time Management Loop
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
             color: const Color(0xFF1E272C),
-            child: Row(
+            child: Column(
               children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isDrawCompleted ? null : _drawNextNumber,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _isDrawCompleted
-                          ? Colors.grey.shade700
-                          : const Color(0xFF00B894),
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.grey.shade800,
-                      disabledForegroundColor: Colors.white60,
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 11, horizontal: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                Row(
+                  children: [
+                    // Timer Loop Toggle (Start / Pause Auto Calling)
+                    Expanded(
+                      flex: 3,
+                      child: ElevatedButton.icon(
+                        onPressed: _isDrawCompleted ? null : _toggleAuto,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _isDrawCompleted
+                              ? Colors.grey.shade700
+                              : (_isAutoRunning
+                                  ? Colors.amber.shade700
+                                  : const Color(0xFF00B894)),
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: Colors.grey.shade800,
+                          disabledForegroundColor: Colors.white60,
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 11, horizontal: 6),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        icon: Icon(
+                          _isDrawCompleted
+                              ? Icons.lock_rounded
+                              : (_isAutoRunning
+                                  ? Icons.pause_circle_rounded
+                                  : Icons.play_circle_fill_rounded),
+                          size: 18,
+                        ),
+                        label: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            _isDrawCompleted
+                                ? 'Locked'
+                                : (_isAutoRunning
+                                    ? 'Pause Loop ($_countdown s)'
+                                    : 'Start Loop ($_intervalSeconds s)'),
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ),
                       ),
                     ),
-                    icon: Icon(
-                        _isDrawCompleted
-                            ? Icons.lock_rounded
-                            : Icons.campaign_rounded,
-                        size: 19),
-                    label: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        _isDrawCompleted
-                            ? 'Draw Completed & Locked'
-                            : 'Announce & Draw Next',
-                        style: const TextStyle(
-                            fontSize: 12.5, fontWeight: FontWeight.bold),
+                    const SizedBox(width: 8),
+
+                    // Advance Pick / Next Number Button
+                    Expanded(
+                      flex: 3,
+                      child: ElevatedButton.icon(
+                        onPressed: _isDrawCompleted ? null : _drawNextNumber,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _isDrawCompleted
+                              ? Colors.grey.shade700
+                              : (_isAutoRunning
+                                  ? const Color(0xFF4F46E5)
+                                  : const Color(0xFF0984E3)),
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: Colors.grey.shade800,
+                          disabledForegroundColor: Colors.white60,
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 11, horizontal: 6),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        icon: Icon(
+                          _isDrawCompleted
+                              ? Icons.lock_outline_rounded
+                              : (_isAutoRunning
+                                  ? Icons.fast_forward_rounded
+                                  : Icons.campaign_rounded),
+                          size: 18,
+                        ),
+                        label: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            _isDrawCompleted
+                                ? 'Locked'
+                                : (_isAutoRunning
+                                    ? 'Pick Now (Advance)'
+                                    : 'Announce & Draw'),
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 6),
+
+                    IconButton(
+                      onPressed: _isDrawCompleted ? null : _undoLastNumber,
+                      icon: const Icon(Icons.undo_rounded,
+                          color: Colors.white70, size: 20),
+                      tooltip: 'Undo Last Call',
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.white.withOpacity(0.1),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                IconButton(
-                  onPressed: _isDrawCompleted ? null : _undoLastNumber,
-                  icon: const Icon(Icons.undo_rounded, color: Colors.white70, size: 20),
-                  tooltip: 'Undo Last Call',
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.white.withOpacity(0.1),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                const SizedBox(height: 8),
+
+                // Speed Selector up to 10s & Countdown Status
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Flexible(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _isAutoRunning
+                                ? Icons.timer_rounded
+                                : Icons.timer_outlined,
+                            size: 14,
+                            color: _isAutoRunning
+                                ? const Color(0xFF00E676)
+                                : Colors.white60,
+                          ),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              _isAutoRunning
+                                  ? 'Calling in ${_countdown}s (pick advance anytime)'
+                                  : 'Timer loop paused',
+                              style: TextStyle(
+                                color: _isAutoRunning
+                                    ? const Color(0xFF00E676)
+                                    : Colors.white60,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
+                    _buildSpeedSelectorWidget(isDarkTheme: true),
+                  ],
                 ),
               ],
             ),
@@ -4031,6 +4667,81 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
           const SizedBox(height: 12),
 
+          // Time Management Controls (Timer Loops up to 10s with Advance Draw)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _isAutoRunning
+                              ? Icons.timer_rounded
+                              : Icons.timer_outlined,
+                          size: 16,
+                          color: _isAutoRunning
+                              ? const Color(0xFF00B894)
+                              : Colors.grey.shade700,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _isAutoRunning
+                              ? 'Next call in ${_countdown}s (or pick advance)'
+                              : 'Timer loop paused',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.bold,
+                            color: _isAutoRunning
+                                ? const Color(0xFF00896F)
+                                : Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: _isDrawCompleted ? null : _toggleAuto,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _isAutoRunning
+                            ? Colors.amber.shade700
+                            : const Color(0xFF00B894),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        minimumSize: Size.zero,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      icon: Icon(
+                        _isAutoRunning
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        size: 16,
+                      ),
+                      label: Text(
+                        _isAutoRunning ? 'Pause Loop' : 'Start Loop',
+                        style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                _buildSpeedSelectorWidget(isDarkTheme: false),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
           // Quick Number Input Row (Responsive)
           LayoutBuilder(
             builder: (context, constraints) {
@@ -4094,7 +4805,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                   ElevatedButton.icon(
                     onPressed: _isDrawCompleted ? null : _drawNextNumber,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00B894),
+                      backgroundColor: _isAutoRunning
+                          ? const Color(0xFF4F46E5)
+                          : const Color(0xFF00B894),
                       foregroundColor: Colors.white,
                       disabledBackgroundColor: Colors.grey.shade300,
                       disabledForegroundColor: Colors.grey.shade600,
@@ -4107,12 +4820,16 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                     icon: Icon(
                         _isDrawCompleted
                             ? Icons.lock_outline_rounded
-                            : Icons.casino_rounded,
+                            : (_isAutoRunning
+                                ? Icons.fast_forward_rounded
+                                : Icons.casino_rounded),
                         size: 15),
                     label: Text(
                       _isDrawCompleted
                           ? 'Locked'
-                          : (isNarrow ? 'Draw' : 'Draw Coin'),
+                          : (_isAutoRunning
+                              ? (isNarrow ? 'Advance' : 'Draw Advance')
+                              : (isNarrow ? 'Draw' : 'Draw Coin')),
                       style: const TextStyle(
                           fontSize: 11.5, fontWeight: FontWeight.bold),
                     ),
@@ -4707,7 +5424,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  '🏆 Winner: ${awardInfo['winner_name']} (SL #${awardInfo['sl_no']})',
+                                  '🏆 Winner: ${awardInfo['winner_name']} (${_formatAwardSl(awardInfo['sl_no'])})',
                                   style: TextStyle(
                                     fontSize: 11.5,
                                     fontWeight: FontWeight.bold,
@@ -4888,7 +5605,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       if (nameLower.contains('housefull')) {
         // All 15 numbers called
         won = numbers.every((n) => _calledNumbers.contains(n));
-      } else if (nameLower.contains('quick') || nameLower.contains('five')) {
+      } else if (_isQuick10Prize(nameLower)) {
+        // Quick 10: 10 numbers called
+        final calledCount =
+            numbers.where((n) => _calledNumbers.contains(n)).length;
+        won = calledCount >= 10;
+      } else if (_isQuick5Prize(nameLower)) {
         // Any 5 numbers called
         final calledCount =
             numbers.where((n) => _calledNumbers.contains(n)).length;
@@ -4938,10 +5660,14 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             ? Text(
                 'No tickets have completed "$prizeName" yet with the current ${_calledNumbers.length} called numbers.',
               )
-            : SizedBox(
+            : Container(
                 width: double.maxFinite,
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.6,
+                ),
                 child: ListView.separated(
                   shrinkWrap: true,
+                  physics: const BouncingScrollPhysics(),
                   itemCount: winningTickets.length,
                   separatorBuilder: (_, __) => const Divider(),
                   itemBuilder: (_, i) {

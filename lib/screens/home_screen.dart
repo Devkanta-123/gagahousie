@@ -167,11 +167,15 @@ class _HomeScreenState extends State<HomeScreen> {
               if (isDrawStarted) {
                 final tid =
                     notification.metadata['ticket_id']?.toString() ?? '';
+                final isLive = notification.type == 'live_draw' ||
+                    notification.metadata['is_live'] == true ||
+                    notification.metadata['mode'] == 'realLive';
+                final mode = notification.metadata['mode']?.toString();
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) =>
-                        DrawPage(ticketId: tid.isNotEmpty ? tid : null),
+                        DrawPage(ticketId: tid.isNotEmpty ? tid : null, isLive: isLive, mode: mode),
                   ),
                 );
               } else {
