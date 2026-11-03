@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -44,6 +47,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   final List<int> _drawHistory = [];
   late List<int> _remainingNumbers;
   int? _currentNumber;
+  final List<int> _stagedNumbersQueue = [];
+  final Set<int> _userDeliveredNumbers = {};
+  int? _userDeliveredCurrentNumber;
   bool _hasSentStartNotification = false;
   bool _isDrawCompleted = false;
   bool _isTransferringFunds = false;
@@ -82,6 +88,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
   // Voice Announcement (TTS) State
   final FlutterTts _flutterTts = FlutterTts();
+  bool _isFlutterTtsAvailable = true;
+  static bool _hasCalledNumbersColumnInDb = true;
   bool _isVoiceEnabled = true;
   bool _isSpeaking = false;
   String? _lastAnnouncementText;
@@ -233,6 +241,11 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _initCamera();
       _startLiveTimer();
       _startLiveStreamSyncTimer();
+      if (!_isDrawCompleted) {
+        _isAutoRunning = true;
+        _countdown = _intervalSeconds;
+        _restartCountdownTimer();
+      }
       Future.delayed(const Duration(milliseconds: 600), () {
         if (mounted) _broadcastLiveState();
       });
@@ -343,7 +356,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           backgroundColor:
               isAlreadyWon ? Colors.orange.shade800 : const Color(0xFF6366F1),
           behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 5),
+          duration: const Duration(seconds: 8),
           content: Row(
             children: [
               Icon(
@@ -355,8 +368,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               Expanded(
                 child: Text(
                   isAlreadyWon
-                      ? '⚠️ $uName claimed $pName (already won by ${_awardedPrizes[pName.toLowerCase().trim()]?['winner_name']})'
-                      : '🔔 New Claim! $uName (SL #$sl) for $pName',
+                      ? '⚠️ $uName auto-claimed $pName (already won by ${_awardedPrizes[pName.toLowerCase().trim()]?['winner_name']})'
+                      : '🔔 New Auto-Claim! $uName (SL #$sl) for $pName',
                   style:
                       const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
@@ -364,7 +377,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             ],
           ),
           action: SnackBarAction(
-            label: 'VERIFY',
+            label: 'REVIEW TICKET',
             textColor: Colors.white,
             onPressed: () => _showClaimsVerificationSheet(filterPrize: pName),
           ),
@@ -373,16 +386,12 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
 
     if (_isVoiceEnabled) {
-      try {
-        if (isAlreadyWon) {
-          _flutterTts.speak(
-              'Notice: $uName claimed $pName, but this prize was already won!');
-        } else {
-          _flutterTts.speak(
-              'Prize claim received! $uName is claiming $pName on ticket SL $sl!');
-        }
-      } catch (e) {
-        debugPrint('🎙️ [TTS NOTICE] $e');
+      if (isAlreadyWon) {
+        _safeSpeakTts(
+            'Notice: $uName claimed $pName, but this prize was already won!');
+      } else {
+        _safeSpeakTts(
+            'Prize claim received! $uName is claiming $pName on ticket SL $sl!');
       }
     }
   }
@@ -887,13 +896,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
     // 4. Voice Announcement (guarded safely so MissingPluginException never crashes approval)
     if (_isVoiceEnabled) {
-      try {
-        await _flutterTts.stop();
-        await _flutterTts.speak(
-            'Attention players! Winner verified! $uName with ticket SL $sl has WON $pName! Congratulations $uName!');
-      } catch (e) {
-        debugPrint('🎙️ [TTS NOTICE] $e');
-      }
+      _safeSpeakTts(
+          'Attention players! Winner verified! $uName with ticket SL $sl has WON $pName! Congratulations $uName!');
     }
 
     if (mounted) {
@@ -1040,15 +1044,33 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       final client = SupabaseService.instance.client;
       if (client != null) {
         final cleanId = widget.ticket.ticketId.replaceAll('#', '').trim();
+        if (_hasCalledNumbersColumnInDb) {
+          try {
+            await client.from('tickets').update({
+              'status': 'Completed',
+              'awarded_prizes': _awardedPrizes.values.toList(),
+              'called_numbers': _calledNumbers.toList(),
+              'current_number': _currentNumber,
+            }).eq('ticket_id', cleanId);
+            return;
+          } catch (e) {
+            final errStr = e.toString();
+            if (errStr.contains('called_numbers') ||
+                errStr.contains('current_number') ||
+                errStr.contains('PGRST204')) {
+              _hasCalledNumbersColumnInDb = false;
+            } else {
+              rethrow;
+            }
+          }
+        }
         await client.from('tickets').update({
           'status': 'Completed',
           'awarded_prizes': _awardedPrizes.values.toList(),
-          'called_numbers': _calledNumbers.toList(),
-          'current_number': _currentNumber,
         }).eq('ticket_id', cleanId);
       }
     } catch (e) {
-      debugPrint('⚠️ [LOCK DRAW DB ERROR] $e');
+      debugPrint('ℹ️ [LOCK DRAW DB NOTICE] $e');
     }
 
     // 3. Broadcast draw_completed event across WebSocket
@@ -2252,13 +2274,14 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           announcementText ?? _generateAnnouncementText(number);
       _lastAnnouncementText = announcement;
 
-      if (client != null && _broadcastChannel != null) {
-        await _broadcastChannel!.sendBroadcastMessage(
+      final ch = _broadcastChannel ?? client?.channel('gaga_broadcast_feed');
+      if (ch != null) {
+        await ch.sendBroadcastMessage(
           event: 'number_called',
           payload: {
             'ticket_id': widget.ticket.ticketId,
             'number': number,
-            'called_numbers': _calledNumbers.toList(),
+            'called_numbers': _userDeliveredNumbers.toList(),
             'current_number': number,
             'announcement': announcement,
             'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -2267,6 +2290,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             'is_video_active': _isVideoActive,
             'is_mic_active': _isMicActive,
             'live_elapsed_seconds': _liveElapsedSeconds,
+            'countdown': _countdown,
+            'interval': _intervalSeconds,
+            'is_running': _isAutoRunning,
           },
         );
       }
@@ -2275,17 +2301,40 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
   }
 
+  void _broadcastTimerSync() {
+    final client = SupabaseService.instance.client;
+    if (client == null) return;
+    try {
+      final cleanTid = widget.ticket.ticketId.replaceAll('#', '').trim();
+      final ch = _broadcastChannel ?? client.channel('gaga_broadcast_feed');
+      ch.sendBroadcastMessage(
+        event: 'draw_timer_sync',
+        payload: {
+          'ticket_id': cleanTid,
+          'countdown': _countdown,
+          'interval': _intervalSeconds,
+          'is_running': _isAutoRunning,
+          'has_staged': _stagedNumbersQueue.isNotEmpty,
+          'staged_count': _stagedNumbersQueue.length,
+          'current_number': _userDeliveredCurrentNumber,
+          'timestamp': DateTime.now().millisecondsSinceEpoch,
+        },
+      );
+    } catch (_) {}
+  }
+
   Future<void> _broadcastUnmark(int number) async {
     try {
       final client = SupabaseService.instance.client;
-      if (client != null && _broadcastChannel != null) {
-        await _broadcastChannel!.sendBroadcastMessage(
+      final ch = _broadcastChannel ?? client?.channel('gaga_broadcast_feed');
+      if (ch != null) {
+        await ch.sendBroadcastMessage(
           event: 'number_unmarked',
           payload: {
             'ticket_id': widget.ticket.ticketId,
             'number': number,
-            'called_numbers': _calledNumbers.toList(),
-            'current_number': _currentNumber,
+            'called_numbers': _userDeliveredNumbers.toList(),
+            'current_number': _userDeliveredCurrentNumber,
             'timestamp': DateTime.now().millisecondsSinceEpoch,
           },
         );
@@ -2298,8 +2347,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
   Future<void> _broadcastReset() async {
     try {
       final client = SupabaseService.instance.client;
-      if (client != null && _broadcastChannel != null) {
-        await _broadcastChannel!.sendBroadcastMessage(
+      final ch = _broadcastChannel ?? client?.channel('gaga_broadcast_feed');
+      if (ch != null) {
+        await ch.sendBroadcastMessage(
           event: 'draw_reset',
           payload: {
             'ticket_id': widget.ticket.ticketId,
@@ -2322,13 +2372,36 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
           ? widget.ticket.ticketId.substring(1).trim()
           : widget.ticket.ticketId.trim();
 
-      await client.from('tickets').update({
-        'called_numbers': _calledNumbers.toList(),
-        'current_number': _currentNumber,
-        if (_isDrawCompleted) 'status': 'Completed',
-      }).eq('ticket_id', cleanId);
+      if (_hasCalledNumbersColumnInDb) {
+        try {
+          await client.from('tickets').update({
+            'called_numbers': _userDeliveredNumbers.toList(),
+            'current_number': _userDeliveredCurrentNumber,
+            if (_isDrawCompleted) 'status': 'Completed',
+          }).eq('ticket_id', cleanId);
+          return;
+        } catch (e) {
+          final errStr = e.toString();
+          if (errStr.contains('called_numbers') ||
+              errStr.contains('current_number') ||
+              errStr.contains('PGRST204')) {
+            _hasCalledNumbersColumnInDb = false;
+            debugPrint(
+                'ℹ️ [SYNC DRAW STATE DB NOTICE] "called_numbers" column not present in tickets table. Real-time WebSocket broadcast active.');
+          } else {
+            rethrow;
+          }
+        }
+      }
+
+      // Fallback: If draw is completed, sync status only
+      if (_isDrawCompleted) {
+        await client.from('tickets').update({
+          'status': 'Completed',
+        }).eq('ticket_id', cleanId);
+      }
     } catch (e) {
-      debugPrint('⚠️ [SYNC DRAW STATE DB ERROR] $e');
+      debugPrint('ℹ️ [SYNC DRAW STATE DB NOTICE] $e');
     }
   }
 
@@ -2441,9 +2514,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       } catch (_) {}
     }
     _broadcastChannel?.unsubscribe();
-    try {
-      _flutterTts.stop();
-    } catch (_) {}
+    _safeStopTts();
     _autoTimer?.cancel();
     _countdownTimer?.cancel();
     _liveDurationTimer?.cancel();
@@ -2480,8 +2551,15 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             'is_video_active': _isVideoActive,
             'is_mic_active': _isMicActive,
             'live_elapsed_seconds': _liveElapsedSeconds,
-            'current_number': _currentNumber,
-            'announcement': _lastAnnouncementText,
+            'current_number': _userDeliveredCurrentNumber,
+            'announcement': _userDeliveredCurrentNumber != null
+                ? _generateAnnouncementText(_userDeliveredCurrentNumber!)
+                : null,
+            'countdown': _countdown,
+            'interval': _intervalSeconds,
+            'is_running': _isAutoRunning,
+            'has_staged': _stagedNumbersQueue.isNotEmpty,
+            'staged_count': _stagedNumbersQueue.length,
             'timestamp': DateTime.now().millisecondsSinceEpoch,
           },
         );
@@ -2541,12 +2619,70 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
   }
 
+  Future<void> _safeStopTts() async {
+    if (!kIsWeb && Platform.isLinux) {
+      try {
+        await Process.run('spd-say', ['--cancel']);
+      } catch (_) {}
+      return;
+    }
+    if (_isFlutterTtsAvailable) {
+      try {
+        await _flutterTts.stop();
+      } on MissingPluginException {
+        _isFlutterTtsAvailable = false;
+        if (!kIsWeb && Platform.isLinux) {
+          try {
+            await Process.run('spd-say', ['--cancel']);
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _safeSpeakTts(String text) async {
+    if (!_isVoiceEnabled || text.trim().isEmpty) return;
+    if (!kIsWeb && Platform.isLinux) {
+      try {
+        if (mounted) setState(() => _isSpeaking = true);
+        await Process.run('spd-say', ['-r', '10', text]);
+        if (mounted) setState(() => _isSpeaking = false);
+      } catch (_) {
+        if (mounted) setState(() => _isSpeaking = false);
+      }
+      return;
+    }
+
+    if (_isFlutterTtsAvailable) {
+      try {
+        await _safeStopTts();
+        await _flutterTts.speak(text);
+      } on MissingPluginException {
+        _isFlutterTtsAvailable = false;
+        if (!kIsWeb && Platform.isLinux) {
+          try {
+            if (mounted) setState(() => _isSpeaking = true);
+            await Process.run('spd-say', ['-r', '10', text]);
+            if (mounted) setState(() => _isSpeaking = false);
+          } catch (_) {}
+        }
+      } catch (e) {
+        debugPrint('🎙️ [TTS NOTICE] $e');
+      }
+    }
+  }
+
   Future<void> _initTts() async {
+    if (!kIsWeb && Platform.isLinux) {
+      _isFlutterTtsAvailable = false;
+      return;
+    }
     try {
       await _flutterTts.setLanguage('en-US');
-      await _flutterTts.setSpeechRate(0.46);
+      await _flutterTts.setSpeechRate(0.53);
       await _flutterTts.setVolume(1.0);
       await _flutterTts.setPitch(1.0);
+      await _flutterTts.awaitSynthCompletion(false);
 
       _flutterTts.setStartHandler(() {
         if (mounted) setState(() => _isSpeaking = true);
@@ -2557,8 +2693,10 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _flutterTts.setErrorHandler((_) {
         if (mounted) setState(() => _isSpeaking = false);
       });
+    } on MissingPluginException {
+      _isFlutterTtsAvailable = false;
     } catch (e) {
-      debugPrint('🎙️ [TTS INIT ERROR] $e');
+      debugPrint('🎙️ [TTS INIT NOTICE] $e');
     }
   }
 
@@ -2569,19 +2707,19 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
     String digitDetail;
     if (number < 10) {
-      digitDetail = 'Single number $number';
+      digitDetail = 'Single $number';
     } else {
       const digitNames = [
         'Zero', 'One', 'Two', 'Three', 'Four',
         'Five', 'Six', 'Seven', 'Eight', 'Nine'
       ];
-      digitDetail = '${digitNames[tens]} and ${digitNames[units]}, $number';
+      digitDetail = '${digitNames[tens]} and ${digitNames[units]}';
     }
 
     if (slang != null && slang.isNotEmpty) {
-      return 'Pick up number is $number! $digitDetail. $slang, $number!';
+      return 'Number $number! $digitDetail, $slang';
     } else {
-      return 'Pick up number is $number! $digitDetail!';
+      return 'Number $number! $digitDetail';
     }
   }
 
@@ -2593,14 +2731,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       });
     }
 
-    if (!_isVoiceEnabled) return;
-
-    try {
-      await _flutterTts.stop();
-      await _flutterTts.speak(text);
-    } catch (e) {
-      debugPrint('🎙️ [TTS SPEAK ERROR] $e');
-    }
+    await _safeSpeakTts(text);
   }
 
   void _repeatAnnouncement() {
@@ -2867,38 +2998,191 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
 
     if (_remainingNumbers.isEmpty) {
-      _pauseAuto();
-      _completeAndLockDraw();
+      if (_stagedNumbersQueue.isEmpty) {
+        _pauseAuto();
+        _completeAndLockDraw();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'All 90 numbers called! Releasing last ${_stagedNumbersQueue.length} to players...'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
       return;
     }
 
-    final next = _remainingNumbers.removeAt(0);
-    final text = _generateAnnouncementText(next);
-    setState(() {
-      _currentNumber = next;
-      _calledNumbers.add(next);
-      _drawHistory.insert(0, next);
-      _lastAnnouncementText = text;
-      _countdown = _intervalSeconds;
-    });
+    final next = _remainingNumbers.first;
+    _hostCallNumber(next);
+  }
 
-    if (_isAutoRunning) {
-      _restartCountdownTimer();
+  void _hostCallNumber(int number) {
+    if (_isDrawCompleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🔒 Draw is Completed & Locked.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
     }
 
-    _broadcastNumber(next, announcementText: text);
-    _syncDrawStateToDb();
+    if (number < 1 || number > 90) return;
+    if (_calledNumbers.contains(number)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Number $number was already called.'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final isTimerCurrentlyRunning =
+        _isAutoRunning && _countdown > 0 && (_countdownTimer?.isActive ?? false);
+
+    final text = _generateAnnouncementText(number);
+
+    setState(() {
+      // 1. Admin sees and calls number IMMEDIATELY!
+      _currentNumber = number;
+      _calledNumbers.add(number);
+      _drawHistory.insert(0, number);
+      _remainingNumbers.remove(number);
+      _lastAnnouncementText = text;
+
+      // 2. Queue for user delivery at interval pace
+      _stagedNumbersQueue.add(number);
+
+      // Only set countdown if timer was NOT already actively ticking down
+      if (!isTimerCurrentlyRunning || _countdown <= 0) {
+        _countdown = _intervalSeconds;
+      }
+      _isAutoRunning = true;
+    });
+
+    // Voice announcement immediately on host device
+    _announceNumber(number);
+
     if (!_hasSentStartNotification) {
       _hasSentStartNotification = true;
       _sendDrawStartedNotification();
     }
 
-    // Voice announcement for every new pick up
-    _announceNumber(next);
-
     if (_activeMode == HousieGameMode.realLive) {
       _captureAndBroadcastFrame();
     }
+
+    // Start user delivery timer if not already active
+    if (!isTimerCurrentlyRunning) {
+      _restartCountdownTimer();
+    }
+    _broadcastTimerSync();
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF6366F1),
+        duration: const Duration(milliseconds: 1500),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '🎯 #$number called! Releasing to users in ${_countdown}s. You can call next anytime.',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _callStagedNow() {
+    if (_isDrawCompleted || _stagedNumbersQueue.isEmpty) return;
+    final nextNum = _stagedNumbersQueue.removeAt(0);
+    _userDeliveredNumbers.add(nextNum);
+    _userDeliveredCurrentNumber = nextNum;
+
+    final willContinueRunning = _stagedNumbersQueue.isNotEmpty ||
+        (_activeMode == HousieGameMode.systemAuto && _remainingNumbers.isNotEmpty);
+    setState(() {
+      if (willContinueRunning) {
+        _countdown = _intervalSeconds;
+      } else {
+        _countdown = 0;
+        _isAutoRunning = false;
+        _countdownTimer?.cancel();
+      }
+    });
+    _broadcastNumber(nextNum);
+    _syncDrawStateToDb();
+    _broadcastTimerSync();
+  }
+
+  Widget _buildStagedRibbon({bool isDarkTheme = true}) {
+    if (_stagedNumbersQueue.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: isDarkTheme
+            ? const Color(0xFF4338CA).withOpacity(0.4)
+            : const Color(0xFFEEF2FF),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isDarkTheme ? const Color(0xFF818CF8) : const Color(0xFF6366F1),
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.hourglass_top_rounded,
+            color: isDarkTheme ? const Color(0xFFA5B4FC) : const Color(0xFF4F46E5),
+            size: 16,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '⏳ Players Waiting: Releasing #${_stagedNumbersQueue.first} in ${_countdown}s${_stagedNumbersQueue.length > 1 ? " • Next: ${_stagedNumbersQueue.skip(1).map((n) => '#$n').join(', ')}" : ""}',
+              style: TextStyle(
+                color: isDarkTheme ? Colors.white : const Color(0xFF312E81),
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 6),
+          InkWell(
+            onTap: _callStagedNow,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF4F46E5),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text(
+                'Release Now',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _markNumber(int number) {
@@ -2914,51 +3198,47 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     }
 
     if (number < 1 || number > 90) return;
+
     if (_calledNumbers.contains(number)) {
-      // Unmark
+      // Unmark called number
       setState(() {
         _calledNumbers.remove(number);
         _drawHistory.remove(number);
         _remainingNumbers.add(number);
         _remainingNumbers.shuffle();
+        _stagedNumbersQueue.remove(number);
+        _userDeliveredNumbers.remove(number);
+
         if (_currentNumber == number) {
           _currentNumber = _drawHistory.isNotEmpty ? _drawHistory.first : null;
           _lastAnnouncementText = _currentNumber != null
               ? _generateAnnouncementText(_currentNumber!)
               : null;
         }
+        if (_userDeliveredCurrentNumber == number) {
+          _userDeliveredCurrentNumber = _userDeliveredNumbers.isNotEmpty
+              ? _userDeliveredNumbers.last
+              : null;
+        }
+        if (_stagedNumbersQueue.isEmpty &&
+            _activeMode != HousieGameMode.systemAuto) {
+          _isAutoRunning = false;
+          _countdown = 0;
+          _countdownTimer?.cancel();
+        }
       });
       _broadcastUnmark(number);
       _syncDrawStateToDb();
+      _broadcastTimerSync();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('↩️ Number #$number unmarked.'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
     } else {
-      // Mark as called
-      final text = _generateAnnouncementText(number);
-      setState(() {
-        _calledNumbers.add(number);
-        _drawHistory.insert(0, number);
-        _remainingNumbers.remove(number);
-        _currentNumber = number;
-        _lastAnnouncementText = text;
-        _countdown = _intervalSeconds;
-      });
-
-      if (_isAutoRunning) {
-        _restartCountdownTimer();
-      }
-
-      _broadcastNumber(number, announcementText: text);
-      _syncDrawStateToDb();
-      if (!_hasSentStartNotification) {
-        _hasSentStartNotification = true;
-        _sendDrawStartedNotification();
-      }
-
-      // Voice announcement for newly marked pick up
-      _announceNumber(number);
-
-      if (_activeMode == HousieGameMode.realLive) {
-        _captureAndBroadcastFrame();
-      }
+      // Call immediately for admin, queue for user
+      _hostCallNumber(number);
     }
   }
 
@@ -2972,19 +3252,45 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       );
       return;
     }
+
     if (_drawHistory.isEmpty) return;
     final last = _drawHistory.removeAt(0);
     setState(() {
       _calledNumbers.remove(last);
       _remainingNumbers.add(last);
       _remainingNumbers.shuffle();
+      _stagedNumbersQueue.remove(last);
+      _userDeliveredNumbers.remove(last);
+
       _currentNumber = _drawHistory.isNotEmpty ? _drawHistory.first : null;
       _lastAnnouncementText = _currentNumber != null
           ? _generateAnnouncementText(_currentNumber!)
           : null;
+
+      if (_userDeliveredCurrentNumber == last) {
+        _userDeliveredCurrentNumber = _userDeliveredNumbers.isNotEmpty
+            ? _userDeliveredNumbers.last
+            : null;
+      }
+
+      if (_stagedNumbersQueue.isEmpty &&
+          _activeMode != HousieGameMode.systemAuto) {
+        _isAutoRunning = false;
+        _countdown = 0;
+        _countdownTimer?.cancel();
+      }
     });
+
     _broadcastUnmark(last);
     _syncDrawStateToDb();
+    _broadcastTimerSync();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('↩️ Call #$last undone.'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _resetGame() {
@@ -3017,6 +3323,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
               setState(() {
                 _calledNumbers.clear();
                 _drawHistory.clear();
+                _stagedNumbersQueue.clear();
+                _userDeliveredNumbers.clear();
+                _userDeliveredCurrentNumber = null;
                 _remainingNumbers =
                     List<int>.generate(90, (i) => i + 1)..shuffle();
                 _currentNumber = null;
@@ -3058,14 +3367,16 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       );
       return;
     }
-    if (_remainingNumbers.isEmpty) {
+    if (_remainingNumbers.isEmpty && _stagedNumbersQueue.isEmpty) {
       _showGameOverDialog();
       return;
     }
 
     setState(() {
       _isAutoRunning = true;
-      _countdown = _intervalSeconds;
+      if (_countdown <= 0) {
+        _countdown = _intervalSeconds;
+      }
     });
 
     if (!_hasSentStartNotification) {
@@ -3073,15 +3384,24 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
       _sendDrawStartedNotification();
     }
 
-    if (_currentNumber == null) {
-      _drawNextNumber();
+    // In systemAuto mode, if no number has been called yet, immediately call first one on host
+    // and queue for user delivery!
+    if (_currentNumber == null &&
+        _stagedNumbersQueue.isEmpty &&
+        _activeMode == HousieGameMode.systemAuto &&
+        _remainingNumbers.isNotEmpty) {
+      final next = _remainingNumbers.first;
+      _hostCallNumber(next);
     } else {
       _restartCountdownTimer();
+      _broadcastTimerSync();
     }
   }
 
   void _restartCountdownTimer() {
     _countdownTimer?.cancel();
+    if (!_isAutoRunning || _isDrawCompleted) return;
+
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) {
         t.cancel();
@@ -3091,15 +3411,77 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
         t.cancel();
         return;
       }
+
       if (_countdown > 1) {
         setState(() {
           _countdown--;
         });
+        _broadcastTimerSync();
       } else {
-        setState(() {
-          _countdown = _intervalSeconds;
-        });
-        _drawNextNumber();
+        // Countdown reached 0: Deliver next queued number to user side!
+        if (_stagedNumbersQueue.isNotEmpty) {
+          final numberToDeliver = _stagedNumbersQueue.removeAt(0);
+          _userDeliveredNumbers.add(numberToDeliver);
+          _userDeliveredCurrentNumber = numberToDeliver;
+
+          final hasMore = _stagedNumbersQueue.isNotEmpty ||
+              (_activeMode == HousieGameMode.systemAuto &&
+                  _remainingNumbers.isNotEmpty);
+
+          setState(() {
+            if (hasMore) {
+              _countdown = _intervalSeconds;
+            } else {
+              _countdown = 0;
+              _isAutoRunning = false;
+            }
+          });
+
+          _broadcastNumber(numberToDeliver);
+          _syncDrawStateToDb();
+          _broadcastTimerSync();
+
+          if (!hasMore) {
+            t.cancel();
+            if (_remainingNumbers.isEmpty && _stagedNumbersQueue.isEmpty) {
+              _completeAndLockDraw();
+            }
+          }
+        } else if (_activeMode == HousieGameMode.systemAuto &&
+            _remainingNumbers.isNotEmpty) {
+          // In systemAuto mode when queue is empty, auto-draw next number on host and deliver to user
+          final nextNum = _remainingNumbers.first;
+          _hostCallNumber(nextNum);
+          _stagedNumbersQueue.remove(nextNum);
+          _userDeliveredNumbers.add(nextNum);
+          _userDeliveredCurrentNumber = nextNum;
+
+          final hasMore = _remainingNumbers.isNotEmpty;
+          setState(() {
+            _countdown = hasMore ? _intervalSeconds : 0;
+            _isAutoRunning = hasMore;
+          });
+
+          _broadcastNumber(nextNum);
+          _syncDrawStateToDb();
+          _broadcastTimerSync();
+
+          if (!hasMore) {
+            t.cancel();
+            _completeAndLockDraw();
+          }
+        } else {
+          // No number queued and not in systemAuto: stop timer and wait for host
+          setState(() {
+            _countdown = 0;
+            _isAutoRunning = false;
+          });
+          _broadcastTimerSync();
+          t.cancel();
+          if (_remainingNumbers.isEmpty && _stagedNumbersQueue.isEmpty) {
+            _completeAndLockDraw();
+          }
+        }
       }
     });
   }
@@ -3110,8 +3492,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     if (mounted) {
       setState(() {
         _isAutoRunning = false;
-        _countdown = _intervalSeconds;
       });
+      _broadcastTimerSync();
     }
   }
 
@@ -3123,6 +3505,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
     if (_isAutoRunning) {
       _restartCountdownTimer();
     }
+    _broadcastTimerSync();
   }
 
   Widget _buildSpeedSelectorWidget({bool isDarkTheme = true}) {
@@ -3851,6 +4234,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
           const SizedBox(height: 12),
 
+          _buildStagedRibbon(isDarkTheme: true),
+
           // Big Number Ball
           ScaleTransition(
             scale: _isAutoRunning ? _pulseAnimation : const AlwaysStoppedAnimation(1.0),
@@ -4229,6 +4614,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             color: const Color(0xFF1E272C),
             child: Column(
               children: [
+                _buildStagedRibbon(isDarkTheme: true),
                 Row(
                   children: [
                     // Timer Loop Toggle (Start / Pause Auto Calling)
@@ -4308,9 +4694,7 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                           child: Text(
                             _isDrawCompleted
                                 ? 'Locked'
-                                : (_isAutoRunning
-                                    ? 'Pick Now (Advance)'
-                                    : 'Announce & Draw'),
+                                : 'Next Advance',
                             style: const TextStyle(
                                 fontSize: 12, fontWeight: FontWeight.bold),
                           ),
@@ -4667,6 +5051,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
 
           const SizedBox(height: 12),
 
+          _buildStagedRibbon(isDarkTheme: false),
+
           // Time Management Controls (Timer Loops up to 10s with Advance Draw)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -4995,9 +5381,37 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                     ],
                   ),
                 )
-              else if (_activeMode == HousieGameMode.manual)
+              else if (_stagedNumbersQueue.isNotEmpty)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6366F1).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                        color: const Color(0xFF6366F1), width: 0.8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.hourglass_top_rounded,
+                          size: 11, color: Color(0xFF6366F1)),
+                      const SizedBox(width: 3),
+                      Text(
+                        '${_stagedNumbersQueue.length} PENDING PLAYERS (${_countdown}s)',
+                        style: const TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF4F46E5),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else if (_activeMode == HousieGameMode.manual ||
+                  _activeMode == HousieGameMode.realLive)
                 const Text(
-                  '💡 Tap any tile to call/unmark',
+                  '💡 Tap any tile to mark or stage',
                   style: TextStyle(fontSize: 10.5, color: Colors.grey),
                 ),
             ],
@@ -5017,8 +5431,9 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
             ),
             itemBuilder: (context, index) {
               final number = index + 1;
-              final isCalled = _calledNumbers.contains(number);
+              final isCalledByHost = _calledNumbers.contains(number);
               final isCurrent = _currentNumber == number;
+              final isPendingUserDelivery = _stagedNumbersQueue.contains(number);
 
               return InkWell(
                 onTap: () {
@@ -5032,7 +5447,8 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                     );
                     return;
                   }
-                  if (_activeMode == HousieGameMode.manual) {
+                  if (_activeMode == HousieGameMode.manual ||
+                      _activeMode == HousieGameMode.realLive) {
                     _markNumber(number);
                   }
                 },
@@ -5040,19 +5456,23 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   decoration: BoxDecoration(
-                    color: isCalled
+                    color: isCalledByHost
                         ? (isCurrent
                             ? const Color(0xFFFF9F43)
-                            : const Color(0xFF00B894))
+                            : (isPendingUserDelivery
+                                ? const Color(0xFF6366F1)
+                                : const Color(0xFF00B894)))
                         : const Color(0xFFF1F2F6),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
                       color: isCurrent
                           ? Colors.orange.shade800
-                          : (isCalled
-                              ? const Color(0xFF00B894)
-                              : Colors.grey.shade300),
-                      width: isCurrent ? 1.8 : 0.8,
+                          : (isPendingUserDelivery
+                              ? const Color(0xFF4338CA)
+                              : (isCalledByHost
+                                  ? const Color(0xFF00B894)
+                                  : Colors.grey.shade300)),
+                      width: isCurrent || isPendingUserDelivery ? 1.8 : 0.8,
                     ),
                     boxShadow: isCurrent
                         ? [
@@ -5061,20 +5481,51 @@ class _AdminHousieGamePageState extends State<AdminHousieGamePage>
                               blurRadius: 6,
                             ),
                           ]
-                        : null,
+                        : (isPendingUserDelivery
+                            ? [
+                                BoxShadow(
+                                  color:
+                                      const Color(0xFF6366F1).withOpacity(0.4),
+                                  blurRadius: 6,
+                                ),
+                              ]
+                            : null),
                   ),
                   child: Center(
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
-                      child: Text(
-                        '$number',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight:
-                              isCalled ? FontWeight.bold : FontWeight.w500,
-                          color: isCalled ? Colors.white : const Color(0xFF2F3542),
-                        ),
-                      ),
+                      child: isPendingUserDelivery && !isCurrent
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '$number',
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(width: 1),
+                                const Icon(
+                                  Icons.hourglass_top_rounded,
+                                  size: 8,
+                                  color: Colors.amberAccent,
+                                ),
+                              ],
+                            )
+                          : Text(
+                              '$number',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: isCalledByHost
+                                    ? FontWeight.bold
+                                    : FontWeight.w500,
+                                color: isCalledByHost
+                                    ? Colors.white
+                                    : const Color(0xFF2F3542),
+                              ),
+                            ),
                     ),
                   ),
                 ),

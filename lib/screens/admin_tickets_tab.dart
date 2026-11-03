@@ -1030,6 +1030,35 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 7),
+
+                  // 5. Delete Ticket & All Sub-Tambola Sets
+                  Tooltip(
+                    message: 'Delete Ticket & Tambola Sets',
+                    child: InkWell(
+                      onTap: () => _handleDeleteTicket(context, ticket),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 34,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEF4444).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: const Color(0xFFEF4444).withOpacity(0.4),
+                            width: 1,
+                          ),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.delete_outline_rounded,
+                            size: 18,
+                            color: Color(0xFFDC2626),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -1393,6 +1422,78 @@ class _AdminTicketsTabState extends State<AdminTicketsTab> {
         ],
       ),
     );
+  }
+
+  /// Handles delete ticket confirmation & execution with all sub-tambola sets
+  Future<void> _handleDeleteTicket(
+      BuildContext context, TicketModel ticket) async {
+    final confirmed =
+        await showDeleteTicketConfirmationDialog(context, ticket);
+
+    if (confirmed == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Deleting ticket ${ticket.ticketId} and sub Tambola sets...'),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF1E293B),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      final provider = Provider.of<TicketProvider>(context, listen: false);
+      final success = await provider.deleteTicket(ticket.ticketId);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded,
+                      color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '🗑️ Ticket ${ticket.ticketId} and all sub Tambola sets deleted successfully.',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: const Color(0xFF059669),
+              duration: const Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                  '❌ Failed to delete ticket. Please check connection and try again.'),
+              backgroundColor: Color(0xFFDC2626),
+              duration: Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    }
   }
 
   /// Opens the Create or Edit Ticket Modal with Form Inputs and Editable Prizes
@@ -2016,12 +2117,12 @@ class _StartHousieOptionsSheet extends StatelessWidget {
                       ),
                       const SizedBox(height: 9),
 
-                      // Option 2: Real Live with Video and Mic Features
+                      // Option 2: Real Live with Video and Mic Features & Manual Mark + Timed Release
                       _buildOptionCard(
                         context,
-                        title: '2. Real Live (Video & Mic)',
+                        title: '2. Real Live (Video & Mic • Timer & Manual Draw)',
                         subtitle:
-                            'Host live with real-time camera and microphone streaming so players can see and hear the host while numbers are drawn.',
+                            'Host live with real-time camera & mic streaming. Draw or mark numbers in advance; calls release to users when countdown timer elapses.',
                         icon: Icons.videocam_rounded,
                         badge: 'LIVE STREAM',
                         badgeColor: const Color(0xFFE74C3C),
@@ -2029,8 +2130,8 @@ class _StartHousieOptionsSheet extends StatelessWidget {
                         tags: const [
                           '🎥 Camera Feed',
                           '🎙️ Live Mic',
-                          '🔄 Flip Camera',
-                          '🔴 Live HUD'
+                          '⏱️ Timed Release',
+                          '✋ Advance Draw'
                         ],
                         onTap: () {
                           Navigator.pop(context);
@@ -2222,6 +2323,126 @@ class _StartHousieOptionsSheet extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Shows a confirmation dialog before permanently deleting a ticket and all its sub-tambola sets
+Future<bool?> showDeleteTicketConfirmationDialog(
+    BuildContext context, TicketModel ticket) {
+  return showDialog<bool>(
+    context: context,
+    builder: (dialogCtx) {
+      return AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: const BoxDecoration(
+                color: Color(0xFFFEE2E2),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.delete_forever_rounded,
+                color: Color(0xFFDC2626),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Delete Ticket?',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1F2937),
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to permanently delete ticket ${ticket.ticketId} ("${ticket.ticketTitle}")?',
+              style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF374151),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFECACA)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Text(
+                    '⚠️ This action will permanently remove:',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF991B1B),
+                    ),
+                  ),
+                  SizedBox(height: 6),
+                  Text(
+                    '• Main draw ticket & prize setup\n'
+                    '• All sub-Tambola sets (SL 1 to 6 / 12)\n'
+                    '• Any player bookings for this draw',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: Color(0xFFB91C1C),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actionsPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            ),
+            icon: const Icon(Icons.delete_rounded, size: 16),
+            label: const Text(
+              'Delete Everything',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ),
+        ],
+      );
+    },
+  );
 }
 
 /// Modal Bottom Sheet for Admin Ticket Creation & Editing
@@ -2569,6 +2790,13 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
                           ],
                         ),
                       ),
+                      if (isEdit && widget.ticketToEdit != null)
+                        IconButton(
+                          tooltip: 'Delete Ticket & Tambola Sets',
+                          icon: const Icon(Icons.delete_outline_rounded,
+                              color: Color(0xFFDC2626)),
+                          onPressed: () => _handleDeleteFromBottomSheet(context),
+                        ),
                       IconButton(
                         icon: const Icon(Icons.close_rounded),
                         onPressed: () => Navigator.pop(context),
@@ -2967,6 +3195,36 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
                       ),
                     ),
 
+                    if (isEdit && widget.ticketToEdit != null) ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: OutlinedButton.icon(
+                          onPressed: _isPublishing
+                              ? null
+                              : () => _handleDeleteFromBottomSheet(context),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFDC2626),
+                            side: const BorderSide(
+                                color: Color(0xFFFCA5A5), width: 1.2),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          icon: const Icon(Icons.delete_forever_rounded,
+                              size: 20),
+                          label: const Text(
+                            'Delete Ticket & Tambola Sets',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+
                     const SizedBox(height: 16),
                   ],
                 ),
@@ -2978,6 +3236,56 @@ class _CreateTicketBottomSheetState extends State<_CreateTicketBottomSheet> {
     ),
   );
 }
+
+  Future<void> _handleDeleteFromBottomSheet(BuildContext context) async {
+    final ticket = widget.ticketToEdit;
+    if (ticket == null) return;
+
+    final confirmed =
+        await showDeleteTicketConfirmationDialog(context, ticket);
+
+    if (confirmed == true && mounted) {
+      Navigator.pop(context); // Close bottom sheet
+      final provider = Provider.of<TicketProvider>(context, listen: false);
+      final success = await provider.deleteTicket(ticket.ticketId);
+
+      if (mounted) {
+        if (success) {
+          widget.onSaved?.call();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded,
+                      color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '🗑️ Ticket ${ticket.ticketId} and all sub Tambola sets deleted successfully.',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: const Color(0xFF059669),
+              duration: const Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                  '❌ Failed to delete ticket. Please check connection and try again.'),
+              backgroundColor: Color(0xFFDC2626),
+              duration: Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    }
+  }
 
   Widget _buildFieldLabel(String label) {
     return Padding(

@@ -294,7 +294,7 @@ class TicketService {
     }
   }
 
-  /// Delete a ticket from Supabase DB
+  /// Delete a ticket and ALL its sub-tambola sets, purchases, and related data from Supabase DB
   Future<bool> deleteTicket(String ticketId) async {
     final client = this.client;
     if (client == null || !SupabaseConfig.isConfigured) {
@@ -302,8 +302,38 @@ class TicketService {
     }
 
     try {
-      await client.from(ticketsTable).delete().eq('ticket_id', ticketId);
-      debugPrint('🗑️ [TICKETS] Deleted ticket $ticketId from DB.');
+      final cleanId = ticketId.startsWith('#')
+          ? ticketId.substring(1).trim()
+          : ticketId.trim();
+
+      // 1. Explicitly delete ALL sub-Tambola sets (SL 1 to 6 / 12) for this draw ticket
+      try {
+        await client
+            .from(tambolaTicketsTable)
+            .delete()
+            .filter('ticket_id', 'in', '($cleanId,#$cleanId)');
+        debugPrint('🗑️ [TAMBOLA] Deleted all sub tambola sets for draw $cleanId');
+      } catch (e) {
+        debugPrint('⚠️ [TAMBOLA DELETE NOTICE] $e');
+      }
+
+      // 2. Explicitly delete any ticket purchases recorded for this draw
+      try {
+        await client
+            .from(ticketPurchasesTable)
+            .delete()
+            .filter('ticket_id', 'in', '($cleanId,#$cleanId)');
+        debugPrint('🗑️ [PURCHASES] Deleted ticket purchases for draw $cleanId');
+      } catch (e) {
+        debugPrint('⚠️ [PURCHASES DELETE NOTICE] $e');
+      }
+
+      // 3. Delete the parent draw ticket from tickets table
+      await client
+          .from(ticketsTable)
+          .delete()
+          .filter('ticket_id', 'in', '($cleanId,#$cleanId)');
+      debugPrint('🗑️ [TICKETS] Deleted ticket $ticketId and all sub tambola sets from DB.');
       return true;
     } catch (e) {
       debugPrint('❌ [TICKETS DELETE ERROR] $e');
@@ -446,10 +476,13 @@ class TicketService {
     }
 
     try {
+      final cleanId = ticketId.startsWith('#')
+          ? ticketId.substring(1).trim()
+          : ticketId.trim();
       await client
           .from(tambolaTicketsTable)
           .delete()
-          .eq('ticket_id', ticketId);
+          .filter('ticket_id', 'in', '($cleanId,#$cleanId)');
       return true;
     } catch (e) {
       debugPrint('❌ [TAMBOLA DELETE ERROR] $e');

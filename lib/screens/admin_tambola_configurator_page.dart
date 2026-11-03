@@ -9,6 +9,7 @@ import '../providers/ticket_provider.dart';
 import '../services/tambola_excel_service.dart';
 import '../utils/constants.dart';
 import '../widgets/gaga_app_header.dart';
+import 'admin_tickets_tab.dart';
 
 class AdminTambolaConfiguratorPage extends StatefulWidget {
   final TicketModel ticket;
@@ -843,6 +844,78 @@ class _AdminTambolaConfiguratorPageState
     );
   }
 
+  /// Prompts admin confirmation to delete this ticket and all its sub-Tambola sets
+  Future<void> _confirmDeleteTicketAndSets() async {
+    final confirmed =
+        await showDeleteTicketConfirmationDialog(context, widget.ticket);
+
+    if (confirmed == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('Deleting ticket ${widget.ticket.ticketId} and sub Tambola sets...'),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF1E293B),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      final provider = Provider.of<TicketProvider>(context, listen: false);
+      final success = await provider.deleteTicket(widget.ticket.ticketId);
+
+      if (mounted) {
+        Navigator.pop(context); // Return to tickets tab
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded,
+                      color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '🗑️ Ticket ${widget.ticket.ticketId} and all sub Tambola sets deleted successfully.',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: const Color(0xFF059669),
+              duration: const Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                  '❌ Failed to delete ticket. Please check connection and try again.'),
+              backgroundColor: Color(0xFFDC2626),
+              duration: Duration(seconds: 3),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   /// Template & formatting guide modal with one-tap Download Sample Excel
   void _showTemplateDialog() {
     showModalBottomSheet(
@@ -1404,6 +1477,12 @@ class _AdminTambolaConfiguratorPageState
                   icon: const Icon(Icons.download_rounded,
                       color: Colors.white, size: 20),
                   onPressed: _showTemplateDialog,
+                ),
+                IconButton(
+                  tooltip: 'Delete Ticket & Tambola Sets',
+                  icon: const Icon(Icons.delete_outline_rounded,
+                      color: Color(0xFFFF8A80), size: 20),
+                  onPressed: _confirmDeleteTicketAndSets,
                 ),
               ],
             ),

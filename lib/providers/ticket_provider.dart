@@ -303,13 +303,25 @@ class TicketProvider extends ChangeNotifier {
     }
   }
 
-  /// Remove ticket by ticketId
+  /// Remove ticket and all associated sub-tambola sets by ticketId
   Future<bool> deleteTicket(String ticketId) async {
-    final success = await TicketService.instance.deleteTicket(ticketId);
+    final cleanId = ticketId.startsWith('#')
+        ? ticketId.substring(1).trim()
+        : ticketId.trim();
+    final success = await TicketService.instance.deleteTicket(cleanId);
     if (success) {
-      _tickets.removeWhere((t) => t.ticketId == ticketId);
+      _tickets.removeWhere((t) {
+        final tClean = t.ticketId.startsWith('#')
+            ? t.ticketId.substring(1).trim()
+            : t.ticketId.trim();
+        return tClean == cleanId || t.ticketId == ticketId;
+      });
       _tambolaTicketsCache.remove(ticketId);
+      _tambolaTicketsCache.remove(cleanId);
+      _tambolaTicketsCache.remove('#$cleanId');
       _ticketIdsWithTambola.remove(ticketId);
+      _ticketIdsWithTambola.remove(cleanId);
+      _ticketIdsWithTambola.remove('#$cleanId');
       notifyListeners();
     }
     return success;

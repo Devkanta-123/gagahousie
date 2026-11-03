@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -51,6 +54,7 @@ class _DrawPageState extends State<DrawPage>
   // Awarded prizes & claims tracking
   final Map<String, Map<String, dynamic>> _awardedPrizes = {};
   final Set<String> _pendingUserClaims = {};
+  final Set<String> _autoClaimingPrizes = {};
   final Set<String> _spokenAlertKeys = {};
   bool _isDrawCompleted = false;
 
@@ -72,8 +76,19 @@ class _DrawPageState extends State<DrawPage>
   Uint8List? _lastHostCameraFrame;
   bool _userAudioMuted = false;
   bool _isLiveStreamExpanded = true;
-  bool _isHostSpeaking = false;
   Timer? _hostSpeakingTimer;
+
+  // Draw countdown timer state (synced with Host)
+  int _nextDrawCountdown = 0;
+  int _drawInterval = 5;
+  bool _isTimerActive = false;
+  Timer? _userCountdownTimer;
+
+  // ValueNotifiers for high-performance live camera & audio updates (prevents full page rebuilds)
+  final ValueNotifier<Uint8List?> _hostCameraFrameNotifier =
+      ValueNotifier<Uint8List?>(null);
+  final ValueNotifier<int> _liveElapsedSecondsNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<bool> _isHostSpeakingNotifier = ValueNotifier<bool>(false);
 
   // Sound Wave Animation for Live Host Audio
   late AnimationController _waveController;
@@ -81,6 +96,7 @@ class _DrawPageState extends State<DrawPage>
 
   // Voice TTS
   final FlutterTts _flutterTts = FlutterTts();
+  bool _isFlutterTtsAvailable = true;
   bool _voiceEnabled = true;
 
   // Traditional Tambola Nicknames (1 to 90)
@@ -210,11 +226,13 @@ class _DrawPageState extends State<DrawPage>
   void dispose() {
     _liveDurationTimer?.cancel();
     _hostSpeakingTimer?.cancel();
+    _userCountdownTimer?.cancel();
     _waveController.dispose();
-    try {
-      _flutterTts.stop();
-    } catch (_) {}
+    _safeStopTts();
     _pulseController.dispose();
+    _hostCameraFrameNotifier.dispose();
+    _liveElapsedSecondsNotifier.dispose();
+    _isHostSpeakingNotifier.dispose();
     _broadcastChannel?.unsubscribe();
     _ticketsTableChannel?.unsubscribe();
     super.dispose();
@@ -224,9 +242,8 @@ class _DrawPageState extends State<DrawPage>
     if (_liveDurationTimer != null && _liveDurationTimer!.isActive) return;
     _liveDurationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
-        setState(() {
-          _liveElapsedSeconds++;
-        });
+        _liveElapsedSeconds++;
+        _liveElapsedSecondsNotifier.value = _liveElapsedSeconds;
       }
     });
   }
@@ -237,14 +254,39 @@ class _DrawPageState extends State<DrawPage>
     return '$m:$s';
   }
 
+  void _startOrUpdateUserCountdown() {
+    if (!_isTimerActive || _nextDrawCountdown <= 0) {
+      _userCountdownTimer?.cancel();
+      _userCountdownTimer = null;
+      return;
+    }
+    if (_userCountdownTimer != null && _userCountdownTimer!.isActive) {
+      return;
+    }
+    _userCountdownTimer?.cancel();
+    _userCountdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        _userCountdownTimer = null;
+        return;
+      }
+      if (_nextDrawCountdown > 0) {
+        setState(() {
+          _nextDrawCountdown--;
+        });
+      } else {
+        timer.cancel();
+        _userCountdownTimer = null;
+      }
+    });
+  }
+
   void _triggerHostSpeakingAnimation() {
     _hostSpeakingTimer?.cancel();
-    if (mounted) {
-      setState(() => _isHostSpeaking = true);
-    }
-    _hostSpeakingTimer = Timer(const Duration(seconds: 4), () {
+    _isHostSpeakingNotifier.value = true;
+    _hostSpeakingTimer = Timer(const Duration(milliseconds: 2500), () {
       if (mounted) {
-        setState(() => _isHostSpeaking = false);
+        _isHostSpeakingNotifier.value = false;
       }
     });
   }
@@ -266,19 +308,98 @@ class _DrawPageState extends State<DrawPage>
     } catch (_) {}
   }
 
+  Future<void> _safeStopTts() async {
+    if (!kIsWeb && Platform.isLinux) {
+      try {
+        await Process.run('spd-say', ['--cancel']);
+      } catch (_) {}
+      return;
+    }
+    if (_isFlutterTtsAvailable) {
+      try {
+        await _flutterTts.stop();
+      } on MissingPluginException {
+        _isFlutterTtsAvailable = false;
+        if (!kIsWeb && Platform.isLinux) {
+          try {
+            await Process.run('spd-say', ['--cancel']);
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _safeSpeakTts(String text) async {
+    if (!_voiceEnabled || _userAudioMuted || text.trim().isEmpty) return;
+    if (!kIsWeb && Platform.isLinux) {
+      try {
+        _isHostSpeakingNotifier.value = true;
+        await Process.run('spd-say', ['-r', '10', text]);
+        _isHostSpeakingNotifier.value = false;
+      } catch (_) {
+        _isHostSpeakingNotifier.value = false;
+      }
+      return;
+    }
+
+    if (_isFlutterTtsAvailable) {
+      try {
+        await _safeStopTts();
+        await _flutterTts.speak(text);
+      } on MissingPluginException {
+        _isFlutterTtsAvailable = false;
+        if (!kIsWeb && Platform.isLinux) {
+          try {
+            _isHostSpeakingNotifier.value = true;
+            await Process.run('spd-say', ['-r', '10', text]);
+            _isHostSpeakingNotifier.value = false;
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+  }
+
   Future<void> _initTts() async {
+    if (!kIsWeb && Platform.isLinux) {
+      _isFlutterTtsAvailable = false;
+      return;
+    }
     try {
       await _flutterTts.setLanguage('en-US');
-      await _flutterTts.setSpeechRate(0.48);
+      await _flutterTts.setSpeechRate(0.53);
       await _flutterTts.setVolume(1.0);
       await _flutterTts.setPitch(1.0);
+      await _flutterTts.awaitSynthCompletion(false);
+
+      _flutterTts.setStartHandler(() {
+        if (mounted) {
+          _isHostSpeakingNotifier.value = true;
+        }
+      });
+      _flutterTts.setCompletionHandler(() {
+        if (mounted) {
+          _isHostSpeakingNotifier.value = false;
+        }
+      });
+      _flutterTts.setCancelHandler(() {
+        if (mounted) {
+          _isHostSpeakingNotifier.value = false;
+        }
+      });
+      _flutterTts.setErrorHandler((_) {
+        if (mounted) {
+          _isHostSpeakingNotifier.value = false;
+        }
+      });
+    } on MissingPluginException {
+      _isFlutterTtsAvailable = false;
     } catch (e) {
       debugPrint('🎙️ [USER TTS INIT NOTICE] $e');
     }
   }
 
   Future<void> _speakAnnouncement(int number, [String? customAnnouncement]) async {
-    if (!_voiceEnabled) return;
+    if (!_voiceEnabled || _userAudioMuted) return;
     try {
       final slang = _tambolaSlang[number];
       final tens = number ~/ 10;
@@ -286,29 +407,29 @@ class _DrawPageState extends State<DrawPage>
 
       String digitDetail;
       if (number < 10) {
-        digitDetail = 'Single number $number';
+        digitDetail = 'Single $number';
       } else {
         const digitNames = [
           'Zero', 'One', 'Two', 'Three', 'Four',
           'Five', 'Six', 'Seven', 'Eight', 'Nine'
         ];
-        digitDetail = '${digitNames[tens]} and ${digitNames[units]}, $number';
+        digitDetail = '${digitNames[tens]} and ${digitNames[units]}';
       }
 
       String text;
-      // Strictly guarantee audio announcement matches this exact called number!
+      // Strictly guarantee audio announcement matches this exact called number promptly
       if (customAnnouncement != null &&
           customAnnouncement.isNotEmpty &&
-          customAnnouncement.contains('$number')) {
+          customAnnouncement.contains('$number') &&
+          customAnnouncement.length < 50) {
         text = customAnnouncement;
+      } else if (slang != null && slang.isNotEmpty) {
+        text = 'Number $number! $digitDetail, $slang!';
       } else {
-        text = slang != null && slang.isNotEmpty
-            ? 'Pick up number is $number! $digitDetail. $slang, $number!'
-            : 'Pick up number is $number! $digitDetail!';
+        text = 'Number $number! $digitDetail!';
       }
 
-      await _flutterTts.stop();
-      await _flutterTts.speak(text);
+      await _safeSpeakTts(text);
     } catch (_) {}
   }
 
@@ -400,11 +521,27 @@ class _DrawPageState extends State<DrawPage>
     try {
       final client = SupabaseService.instance.client;
       if (client != null) {
-        final res = await client
-            .from('tickets')
-            .select('called_numbers, current_number, awarded_prizes, status')
-            .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
-            .maybeSingle();
+        Map<String, dynamic>? res;
+        try {
+          res = await client
+              .from('tickets')
+              .select('called_numbers, current_number, awarded_prizes, status')
+              .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
+              .maybeSingle();
+        } catch (e) {
+          final errStr = e.toString();
+          if (errStr.contains('called_numbers') ||
+              errStr.contains('current_number') ||
+              errStr.contains('PGRST204')) {
+            res = await client
+                .from('tickets')
+                .select('awarded_prizes, status')
+                .or('ticket_id.eq.$cleanId,ticket_id.eq.#$cleanId')
+                .maybeSingle();
+          } else {
+            rethrow;
+          }
+        }
 
         if (res != null) {
           final called = res['called_numbers'];
@@ -444,17 +581,14 @@ class _DrawPageState extends State<DrawPage>
       debugPrint('⚠️ [SYNC CALLED NUMBERS NOTICE] $e');
     }
 
-    // 3. Auto-mark numbers on user tickets that have already been called
+    // 3. Initialize ticket mark tracking (manual marking per user gameplay)
     for (int i = 0; i < _userPurchasedTickets.length; i++) {
       _userMarkedNumbers.putIfAbsent(i, () => <int>{});
-      for (final row in _userPurchasedTickets[i].ticketData) {
-        for (final cell in row) {
-          if (cell != null && _calledNumbers.contains(cell)) {
-            _userMarkedNumbers[i]!.add(cell);
-          }
-        }
-      }
     }
+
+    // Clear any stale pending claim states on initial sync
+    _pendingUserClaims.clear();
+    _autoClaimingPrizes.clear();
 
     // 4. Setup real-time listener for this draw
     _setupRealtimeChannel();
@@ -473,6 +607,7 @@ class _DrawPageState extends State<DrawPage>
       _claimedPrizes.clear();
       _awardedPrizes.clear();
       _pendingUserClaims.clear();
+      _autoClaimingPrizes.clear();
       _spokenAlertKeys.clear();
       _isLoading = true;
     });
@@ -522,6 +657,7 @@ class _DrawPageState extends State<DrawPage>
               final s = int.tryParse(payload['live_elapsed_seconds'].toString());
               if (s != null && s > _liveElapsedSeconds) {
                 _liveElapsedSeconds = s;
+                _liveElapsedSecondsNotifier.value = s;
               }
             }
             _startLiveTimer();
@@ -561,9 +697,63 @@ class _DrawPageState extends State<DrawPage>
               _speakAnnouncement(num, announcement);
             }
 
-            // Check if any pattern is 1-away or ready to claim, and announce
+            // Check if any pattern is 1-away or ready to claim, auto-claim & announce
             final analysis = _analyzeUserTickets();
+            _checkAndAutoClaimPrizes(analysis);
             _checkAndSpeakPatternAlerts(analysis);
+          }
+
+          final cd = int.tryParse(payload['countdown']?.toString() ?? '');
+          final iv = int.tryParse(payload['interval']?.toString() ?? '');
+          if (mounted) {
+            setState(() {
+              if (cd != null) _nextDrawCountdown = cd;
+              if (iv != null && iv > 0) _drawInterval = iv;
+              if (payload['is_running'] != null) {
+                _isTimerActive = payload['is_running'] == true;
+              }
+            });
+            _userCountdownTimer?.cancel();
+            _userCountdownTimer = null;
+            _startOrUpdateUserCountdown();
+          }
+        },
+      );
+
+      // 1b. Host draw timer countdown sync
+      _broadcastChannel?.onBroadcast(
+        event: 'draw_timer_sync',
+        callback: (payload) {
+          final tid = payload['ticket_id']?.toString() ?? '';
+          final cleanTid = tid.replaceAll('#', '').trim();
+          final currentTid =
+              _drawTicket?.ticketId.replaceAll('#', '').trim() ?? '';
+
+          if (cleanTid.isNotEmpty &&
+              currentTid.isNotEmpty &&
+              cleanTid != currentTid) {
+            return;
+          }
+
+          final cd = int.tryParse(payload['countdown']?.toString() ?? '');
+          final iv = int.tryParse(payload['interval']?.toString() ?? '');
+          final isRunning = payload['is_running'] == true;
+
+          if (mounted) {
+            setState(() {
+              if (iv != null && iv > 0) _drawInterval = iv;
+              _isTimerActive = isRunning;
+              if (cd != null) {
+                // Sync cd if it jumped up (new number queued / reset), drift > 1s, or local timer inactive
+                if (cd > _nextDrawCountdown ||
+                    (_nextDrawCountdown - cd).abs() > 1 ||
+                    _userCountdownTimer == null ||
+                    !_userCountdownTimer!.isActive) {
+                  _nextDrawCountdown = cd;
+                }
+              }
+            });
+            _startOrUpdateUserCountdown();
           }
         },
       );
@@ -621,11 +811,15 @@ class _DrawPageState extends State<DrawPage>
               _claimedPrizes.clear();
               _awardedPrizes.clear();
               _pendingUserClaims.clear();
+              _autoClaimingPrizes.clear();
               _spokenAlertKeys.clear();
+              _nextDrawCountdown = 0;
+              _isTimerActive = false;
               for (final set in _userMarkedNumbers.values) {
                 set.clear();
               }
             });
+            _userCountdownTimer?.cancel();
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('🔄 The host has reset the draw board.'),
@@ -675,6 +869,7 @@ class _DrawPageState extends State<DrawPage>
               if (pName.isNotEmpty) {
                 _awardedPrizes[pName] = awardRecord;
                 _pendingUserClaims.remove(pName);
+                _autoClaimingPrizes.remove(pName);
               }
               if (payload['awarded_prizes'] is List) {
                 for (final item in payload['awarded_prizes']) {
@@ -752,6 +947,7 @@ class _DrawPageState extends State<DrawPage>
             setState(() {
               if (pName.isNotEmpty) {
                 _pendingUserClaims.remove(pName);
+                _autoClaimingPrizes.remove(pName);
               }
             });
 
@@ -800,9 +996,16 @@ class _DrawPageState extends State<DrawPage>
                   _liveElapsedSeconds = int.tryParse(
                           payload['live_elapsed_seconds'].toString()) ??
                       _liveElapsedSeconds;
+                  _liveElapsedSecondsNotifier.value = _liveElapsedSeconds;
                 }
+                final iv = int.tryParse(payload['interval']?.toString() ?? '');
+                final cd = int.tryParse(payload['countdown']?.toString() ?? '');
+                if (iv != null && iv > 0) _drawInterval = iv;
+                _nextDrawCountdown = cd ?? _drawInterval;
+                _isTimerActive = true;
               });
               _startLiveTimer();
+              _startOrUpdateUserCountdown();
             }
 
             ScaffoldMessenger.of(context).showSnackBar(
@@ -855,6 +1058,8 @@ class _DrawPageState extends State<DrawPage>
           if (mounted) {
             setState(() {
               _isDrawCompleted = true;
+              _nextDrawCountdown = 0;
+              _isTimerActive = false;
               if (payload['awarded_prizes'] is List) {
                 for (final item in payload['awarded_prizes']) {
                   if (item is Map) {
@@ -868,6 +1073,7 @@ class _DrawPageState extends State<DrawPage>
                 }
               }
             });
+            _userCountdownTimer?.cancel();
 
             _showDrawCompletedDialog();
           }
@@ -940,6 +1146,7 @@ class _DrawPageState extends State<DrawPage>
                     int.tryParse(payload['live_elapsed_seconds'].toString());
                 if (s != null && s > _liveElapsedSeconds) {
                   _liveElapsedSeconds = s;
+                  _liveElapsedSecondsNotifier.value = s;
                 }
               }
               if (payload['current_number'] != null) {
@@ -952,15 +1159,27 @@ class _DrawPageState extends State<DrawPage>
               if (payload['announcement'] != null) {
                 _lastAnnouncement = payload['announcement'].toString();
               }
+              if (payload['countdown'] != null) {
+                final s = int.tryParse(payload['countdown'].toString());
+                if (s != null) _nextDrawCountdown = s;
+              }
+              if (payload['interval'] != null) {
+                final iv = int.tryParse(payload['interval'].toString());
+                if (iv != null && iv > 0) _drawInterval = iv;
+              }
+              if (payload['is_running'] != null) {
+                _isTimerActive = payload['is_running'] == true;
+              }
             });
             if (isLive) {
               _startLiveTimer();
             }
+            _startOrUpdateUserCountdown();
           }
         },
       );
 
-      // 10. Real-time camera snapshot frame from host
+      // 10. Real-time camera snapshot frame from host (zero UI-thread rebuild lag)
       _broadcastChannel?.onBroadcast(
         event: 'host_camera_frame',
         callback: (payload) {
@@ -979,9 +1198,8 @@ class _DrawPageState extends State<DrawPage>
           if (b64 != null && mounted) {
             try {
               final bytes = base64Decode(b64);
-              setState(() {
-                _lastHostCameraFrame = bytes;
-              });
+              _lastHostCameraFrame = bytes;
+              _hostCameraFrameNotifier.value = bytes;
             } catch (_) {}
           }
         },
@@ -1053,6 +1271,19 @@ class _DrawPageState extends State<DrawPage>
   void _onCellTapped(int ticketIndex, int? number) {
     if (number == null) return;
 
+    if (!_calledNumbers.contains(number)) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('⚠️ Number $number has not been called yet!'),
+          duration: const Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.orange.shade800,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _userMarkedNumbers.putIfAbsent(ticketIndex, () => <int>{});
       if (_userMarkedNumbers[ticketIndex]!.contains(number)) {
@@ -1061,6 +1292,10 @@ class _DrawPageState extends State<DrawPage>
         _userMarkedNumbers[ticketIndex]!.add(number);
       }
     });
+
+    // Check prizes according to marked tambola numbers and auto claim immediately!
+    final analysis = _analyzeUserTickets();
+    _checkAndAutoClaimPrizes(analysis);
   }
 
   void _autoMarkAll() {
@@ -1091,6 +1326,9 @@ class _DrawPageState extends State<DrawPage>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
+
+    final analysis = _analyzeUserTickets();
+    _checkAndAutoClaimPrizes(analysis);
   }
 
   void _autoMarkSingleTicket(int ticketIndex) {
@@ -1120,6 +1358,9 @@ class _DrawPageState extends State<DrawPage>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
+
+    final analysis = _analyzeUserTickets();
+    _checkAndAutoClaimPrizes(analysis);
   }
 
   // ===========================================================================
@@ -1252,18 +1493,23 @@ class _DrawPageState extends State<DrawPage>
 
   ClaimValidationResult _validateMixTicketsForQuickPrize(PrizeItem prize) {
     final List<TicketPurchaseModel> contributingTickets = [];
-    final List<int> allCalledNumbers = [];
+    final List<int> allMarkedCalledNumbers = [];
     final Map<int, List<int>> numbersPerTicket = {};
     int totalMarked = 0;
 
-    for (final ticket in _userPurchasedTickets) {
-      final all15 = ticket.ticketData.expand((r) => r).whereType<int>().toList();
-      final called = all15.where((n) => _calledNumbers.contains(n)).toList();
-      if (called.isNotEmpty) {
+    for (int i = 0; i < _userPurchasedTickets.length; i++) {
+      final ticket = _userPurchasedTickets[i];
+      final markedSet = _userMarkedNumbers[i] ?? <int>{};
+      final all15 =
+          ticket.ticketData.expand((r) => r).whereType<int>().toList();
+      final markedCalled = all15
+          .where((n) => markedSet.contains(n) && _calledNumbers.contains(n))
+          .toList();
+      if (markedCalled.isNotEmpty) {
         contributingTickets.add(ticket);
-        numbersPerTicket[ticket.slNo] = called;
-        allCalledNumbers.addAll(called);
-        totalMarked += called.length;
+        numbersPerTicket[ticket.slNo] = markedCalled;
+        allMarkedCalledNumbers.addAll(markedCalled);
+        totalMarked += markedCalled.length;
       }
     }
 
@@ -1273,26 +1519,32 @@ class _DrawPageState extends State<DrawPage>
 
     final slBreakdown = contributingTickets.isNotEmpty
         ? contributingTickets
-            .map((t) => 'SL #${t.slNo} (${numbersPerTicket[t.slNo]!.length} marked: ${numbersPerTicket[t.slNo]!.join(", ")})')
+            .map((t) =>
+                'SL #${t.slNo} (${numbersPerTicket[t.slNo]!.length} marked: ${numbersPerTicket[t.slNo]!.join(", ")})')
             .join('\n• ')
-        : 'None of your tickets have called numbers yet.';
+        : 'None of your tickets have marked called numbers yet.';
 
     final simpleSlStr = contributingTickets.isNotEmpty
         ? contributingTickets.map((t) => 'SL #${t.slNo}').join(', ')
-        : (_userPurchasedTickets.isNotEmpty ? 'SL #${_userPurchasedTickets.first.slNo}' : '');
+        : (_userPurchasedTickets.isNotEmpty
+            ? 'SL #${_userPurchasedTickets.first.slNo}'
+            : '');
 
     final explanation = isValid
-        ? 'Quick 10 satisfied with $totalMarked numbers marked across mix tickets:\n• $slBreakdown'
-        : 'Quick 10 requires at least 10 numbers marked across your tickets.\nYou currently have $totalMarked/10 marked numbers across:\n• $slBreakdown\nNeeds $needed more number(s).';
+        ? 'Quick 10 satisfied with $totalMarked marked numbers across mix tickets:\n• $slBreakdown'
+        : 'Quick 10 requires at least 10 marked numbers across your tickets.\nYou currently have $totalMarked/10 marked numbers across:\n• $slBreakdown\nNeeds $needed more number(s).';
 
     return ClaimValidationResult(
       isValid: isValid,
       prizeName: prize.name,
       winningTicket: contributingTickets.isNotEmpty
           ? contributingTickets.first
-          : (_userPurchasedTickets.isNotEmpty ? _userPurchasedTickets.first : null),
-      requiredNumbers: allCalledNumbers,
-      missingNumbers: isValid ? [] : List.generate(needed > 0 ? needed : 0, (i) => i),
+          : (_userPurchasedTickets.isNotEmpty
+              ? _userPurchasedTickets.first
+              : null),
+      requiredNumbers: allMarkedCalledNumbers,
+      missingNumbers:
+          isValid ? [] : List.generate(needed > 0 ? needed : 0, (i) => i),
       explanation: explanation,
       isMixClaim: true,
       contributingTickets: contributingTickets,
@@ -1311,6 +1563,13 @@ class _DrawPageState extends State<DrawPage>
     final row1 = grid.length > 1 ? grid[1].whereType<int>().toList() : <int>[];
     final row2 = grid.length > 2 ? grid[2].whereType<int>().toList() : <int>[];
     final all15 = [...row0, ...row1, ...row2];
+    final corners = (row0.length >= 2 && row2.length >= 2)
+        ? [row0.first, row0.last, row2.first, row2.last]
+        : <int>[];
+
+    final tIdx = _userPurchasedTickets.indexOf(ticket);
+    final markedSet =
+        tIdx >= 0 ? (_userMarkedNumbers[tIdx] ?? <int>{}) : <int>{};
 
     bool isValid = false;
     List<int> required = [];
@@ -1319,67 +1578,87 @@ class _DrawPageState extends State<DrawPage>
 
     if (nameLower.contains('housefull') || nameLower.contains('house full')) {
       required = all15;
-      missing = all15.where((n) => !_calledNumbers.contains(n)).toList();
+      missing = all15
+          .where((n) =>
+              !(markedSet.contains(n) && _calledNumbers.contains(n)))
+          .toList();
       isValid = missing.isEmpty && all15.length >= 15;
       explanation = isValid
-          ? 'All 15 numbers on your ticket have been called!'
-          : 'Housefull requires all 15 numbers. You still need ${missing.length} number(s): ${missing.take(5).join(', ')}${missing.length > 5 ? '...' : ''}.';
+          ? 'All 15 numbers on your ticket have been marked and called!'
+          : 'Housefull requires all 15 numbers marked and called. Missing: ${missing.take(5).join(', ')}${missing.length > 5 ? '...' : ''}.';
     } else if (_isQuick5Prize(nameLower)) {
-      final calledOnTicket =
-          all15.where((n) => _calledNumbers.contains(n)).toList();
+      final markedCalled = all15
+          .where((n) => markedSet.contains(n) && _calledNumbers.contains(n))
+          .toList();
       required = all15;
-      isValid = calledOnTicket.length >= 5;
-      final needMore = 5 - calledOnTicket.length;
-      missing = all15.where((n) => !_calledNumbers.contains(n)).toList();
+      isValid = markedCalled.length >= 5;
+      final needMore = 5 - markedCalled.length;
+      missing = all15
+          .where((n) =>
+              !(markedSet.contains(n) && _calledNumbers.contains(n)))
+          .toList();
       explanation = isValid
-          ? '${calledOnTicket.length} numbers on your ticket have been called!'
-          : 'Quick 5 requires at least 5 numbers. You currently have ${calledOnTicket.length}/5 numbers called. Need $needMore more.';
+          ? '${markedCalled.length} numbers marked and called on your ticket!'
+          : 'Quick 5 requires at least 5 marked called numbers. You have ${markedCalled.length}/5. Need $needMore more.';
     } else if (nameLower.contains('1st') ||
         nameLower.contains('first') ||
         nameLower.contains('top')) {
       required = row0;
-      missing = row0.where((n) => !_calledNumbers.contains(n)).toList();
+      missing = row0
+          .where((n) =>
+              !(markedSet.contains(n) && _calledNumbers.contains(n)))
+          .toList();
       isValid = missing.isEmpty && row0.isNotEmpty;
       explanation = isValid
-          ? 'All numbers in Row 1 (Top Line) have been called!'
+          ? 'All numbers in Row 1 (Top Line) marked and called!'
           : '1st Line requires all 5 numbers in Row 1. Missing: ${missing.join(', ')}.';
     } else if (nameLower.contains('2nd') ||
         nameLower.contains('second') ||
         nameLower.contains('middle')) {
       required = row1;
-      missing = row1.where((n) => !_calledNumbers.contains(n)).toList();
+      missing = row1
+          .where((n) =>
+              !(markedSet.contains(n) && _calledNumbers.contains(n)))
+          .toList();
       isValid = missing.isEmpty && row1.isNotEmpty;
       explanation = isValid
-          ? 'All numbers in Row 2 (Middle Line) have been called!'
+          ? 'All numbers in Row 2 (Middle Line) marked and called!'
           : '2nd Line requires all 5 numbers in Row 2. Missing: ${missing.join(', ')}.';
     } else if (nameLower.contains('3rd') ||
         nameLower.contains('third') ||
         nameLower.contains('bottom')) {
       required = row2;
-      missing = row2.where((n) => !_calledNumbers.contains(n)).toList();
+      missing = row2
+          .where((n) =>
+              !(markedSet.contains(n) && _calledNumbers.contains(n)))
+          .toList();
       isValid = missing.isEmpty && row2.isNotEmpty;
       explanation = isValid
-          ? 'All numbers in Row 3 (Bottom Line) have been called!'
+          ? 'All numbers in Row 3 (Bottom Line) marked and called!'
           : '3rd Line requires all 5 numbers in Row 3. Missing: ${missing.join(', ')}.';
     } else if (nameLower.contains('corner') || nameLower.contains('4th')) {
-      if (row0.length >= 2 && row2.length >= 2) {
-        required = [row0.first, row0.last, row2.first, row2.last];
-        missing = required.where((n) => !_calledNumbers.contains(n)).toList();
+      if (corners.length == 4) {
+        required = corners;
+        missing = corners
+            .where((n) =>
+                !(markedSet.contains(n) && _calledNumbers.contains(n)))
+            .toList();
         isValid = missing.isEmpty;
         explanation = isValid
-            ? 'All 4 corner numbers on your ticket have been called!'
+            ? 'All 4 corner numbers on your ticket marked and called!'
             : '4th Corner requires 4 corners. Missing: ${missing.join(', ')}.';
       } else {
         isValid = false;
         explanation = 'Ticket does not have enough corner numbers.';
       }
     } else {
-      // General pattern
-      final called = all15.where((n) => _calledNumbers.contains(n)).toList();
-      isValid = called.length >= 5;
+      final markedCalled = all15
+          .where((n) => markedSet.contains(n) && _calledNumbers.contains(n))
+          .toList();
+      isValid = markedCalled.length >= 5;
       explanation = isValid
-          ? 'Pattern satisfied with ${called.length} called numbers.'
-          : 'Pattern requires at least 5 numbers. You currently have ${called.length}.';
+          ? 'Pattern satisfied with ${markedCalled.length} marked called numbers.'
+          : 'Pattern requires at least 5 numbers. You currently have ${markedCalled.length}.';
     }
 
     return ClaimValidationResult(
@@ -1392,8 +1671,46 @@ class _DrawPageState extends State<DrawPage>
     );
   }
 
+  // ===========================================================================
+  // AUTOMATIC PRIZE CLAIMING
+  // ===========================================================================
+  void _checkAndAutoClaimPrizes(PatternAnalysisResult analysis) {
+    if (_isDrawCompleted ||
+        _userPurchasedTickets.isEmpty ||
+        _calledNumbers.isEmpty) {
+      return;
+    }
+
+    for (final alert in analysis.readyToClaim) {
+      final prize = alert.prize;
+      final pKey = prize.name.toLowerCase().trim();
+
+      // Skip if already awarded to another player
+      if (_awardedPrizes.containsKey(pKey)) continue;
+
+      // Skip if already pending or currently being submitted
+      if (_pendingUserClaims.contains(pKey) ||
+          _autoClaimingPrizes.contains(pKey)) {
+        continue;
+      }
+
+      ClaimValidationResult? result;
+      if (alert.isMixClaim) {
+        result = _validateMixTicketsForQuickPrize(prize);
+      } else {
+        result = _validateTicketForPrize(alert.ticket, prize.name);
+      }
+
+      if (result.isValid) {
+        _autoClaimingPrizes.add(pKey);
+        _confirmAndBroadcastClaim(result, prize, isAutoClaim: true);
+      }
+    }
+  }
+
   Future<void> _confirmAndBroadcastClaim(
-      ClaimValidationResult result, PrizeItem prize) async {
+      ClaimValidationResult result, PrizeItem prize,
+      {bool isAutoClaim = false}) async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final user = auth.currentUser;
     final userName = user?.fullName.isNotEmpty == true
@@ -1439,6 +1756,13 @@ class _DrawPageState extends State<DrawPage>
             }).toList()
           : null;
 
+      final winningTicketIdx = result.winningTicket != null
+          ? _userPurchasedTickets.indexOf(result.winningTicket!)
+          : -1;
+      final ticketMarked = winningTicketIdx >= 0
+          ? (_userMarkedNumbers[winningTicketIdx]?.toList() ?? <int>[])
+          : <int>[];
+
       final payload = {
         'ticket_id': tid,
         'prize_name': prize.name,
@@ -1449,6 +1773,7 @@ class _DrawPageState extends State<DrawPage>
         'serial_number': contributingSerialNos,
         'unique_code': contributingUniqueCodes,
         'ticket_data': result.winningTicket?.ticketData,
+        'marked_numbers': ticketMarked,
         'is_mix_claim': result.isMixClaim,
         if (mixTicketsPayload != null) 'mix_tickets': mixTicketsPayload,
         if (result.isMixClaim) 'total_matched': result.totalMarkedCount,
@@ -1471,12 +1796,74 @@ class _DrawPageState extends State<DrawPage>
           );
         }
       }
+
+      // Safety auto-clear fallback: if host does not act within 5 minutes, clear pending state
+      Future.delayed(const Duration(minutes: 5), () {
+        if (mounted &&
+            _pendingUserClaims.contains(pKey) &&
+            !_awardedPrizes.containsKey(pKey)) {
+          setState(() {
+            _pendingUserClaims.remove(pKey);
+            _autoClaimingPrizes.remove(pKey);
+          });
+        }
+      });
     } catch (e) {
       debugPrint('⚠️ [BROADCAST CLAIM ERROR] $e');
     }
 
-    // 2. Show pending verification dialog to inform user
-    _showClaimSubmittedDialog(result, prize, userName);
+    // 2. Inform user of submitted claim
+    if (isAutoClaim) {
+      final slText = result.isMixClaim
+          ? (result.contributingSlNos.isNotEmpty
+              ? result.contributingSlNos
+              : 'Mix Tickets')
+          : 'SL #${result.winningTicket?.slNo ?? 1}';
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF00B894),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            duration: const Duration(seconds: 4),
+            content: Row(
+              children: [
+                const Icon(Icons.auto_awesome, color: Colors.white, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '🎉 AUTO-CLAIMED: ${prize.name}!',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                      Text(
+                        'Claim on $slText automatically submitted to host for review & approval!',
+                        style:
+                            const TextStyle(fontSize: 11, color: Colors.white),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } else {
+      _showClaimSubmittedDialog(result, prize, userName);
+    }
   }
 
   Widget _buildTambolaTicketPreviewGrid({
@@ -1828,11 +2215,7 @@ class _DrawPageState extends State<DrawPage>
     required String prizeAmount,
     required String slNo,
   }) {
-    if (_voiceEnabled) {
-      try {
-        _flutterTts.speak('Congratulations! You have WON $prizeName!');
-      } catch (_) {}
-    }
+    _safeSpeakTts('Congratulations! You have WON $prizeName!');
 
     showDialog(
       context: context,
@@ -1985,11 +2368,7 @@ class _DrawPageState extends State<DrawPage>
     required String reason,
     required String slNo,
   }) {
-    if (_voiceEnabled) {
-      try {
-        _flutterTts.speak('Your claim for $prizeName was rejected by host.');
-      } catch (_) {}
-    }
+    _safeSpeakTts('Your claim for $prizeName was rejected by host.');
 
     showDialog(
       context: context,
@@ -2117,12 +2496,8 @@ class _DrawPageState extends State<DrawPage>
     required String prizeName,
     required String amount,
   }) {
-    if (_voiceEnabled) {
-      try {
-        _flutterTts.speak(
-            'Congratulations! ₹$amount prize money has been credited to your wallet!');
-      } catch (_) {}
-    }
+    _safeSpeakTts(
+        'Congratulations! ₹$amount prize money has been credited to your wallet!');
 
     showDialog(
       context: context,
@@ -2280,16 +2655,18 @@ class _DrawPageState extends State<DrawPage>
 
         for (int tIdx = 0; tIdx < _userPurchasedTickets.length; tIdx++) {
           final ticket = _userPurchasedTickets[tIdx];
+          final markedSet = _userMarkedNumbers[tIdx] ?? <int>{};
           final all15 =
               ticket.ticketData.expand((r) => r).whereType<int>().toList();
-          final calledOnThis =
-              all15.where((n) => _calledNumbers.contains(n)).toList();
+          final markedCalledOnThis = all15
+              .where((n) => markedSet.contains(n) && _calledNumbers.contains(n))
+              .toList();
 
-          if (calledOnThis.isNotEmpty) {
+          if (markedCalledOnThis.isNotEmpty) {
             contributing.add(ticket);
             contributingSlNos.add(ticket.slNo);
-            matchedNumbersPerTicket[ticket.slNo] = calledOnThis;
-            totalMarkedAcrossTickets += calledOnThis.length;
+            matchedNumbersPerTicket[ticket.slNo] = markedCalledOnThis;
+            totalMarkedAcrossTickets += markedCalledOnThis.length;
           }
         }
 
@@ -2329,11 +2706,14 @@ class _DrawPageState extends State<DrawPage>
           for (int tIdx = 0; tIdx < _userPurchasedTickets.length; tIdx++) {
             targetNumbersPerTicket.putIfAbsent(tIdx, () => <int>{});
             final ticket = _userPurchasedTickets[tIdx];
+            final markedSet = _userMarkedNumbers[tIdx] ?? <int>{};
             final all15 =
                 ticket.ticketData.expand((r) => r).whereType<int>().toList();
-            final uncalled =
-                all15.where((n) => !_calledNumbers.contains(n)).toList();
-            targetNumbersPerTicket[tIdx]!.addAll(uncalled);
+            final uncalledOrUnmarked = all15
+                .where((n) =>
+                    !(markedSet.contains(n) && _calledNumbers.contains(n)))
+                .toList();
+            targetNumbersPerTicket[tIdx]!.addAll(uncalledOrUnmarked);
           }
 
           nearWinList.add(NearWinAlert(
@@ -2345,7 +2725,7 @@ class _DrawPageState extends State<DrawPage>
             missingNumber: 0,
             patternType: 'Quick 10',
             message:
-                'Just 1 more called number needed for ${prize.name} across tickets ($simpleSlDisplay)! (9/10 marked)',
+                'Just 1 more marked number needed for ${prize.name} across tickets ($simpleSlDisplay)! (9/10 marked)',
             isMix: true,
             contributingSlNos: contributingSlNos,
             mixTicketsDisplay: simpleSlDisplay,
@@ -2359,6 +2739,7 @@ class _DrawPageState extends State<DrawPage>
     for (int tIdx = 0; tIdx < _userPurchasedTickets.length; tIdx++) {
       targetNumbersPerTicket.putIfAbsent(tIdx, () => <int>{});
       final ticket = _userPurchasedTickets[tIdx];
+      final markedSet = _userMarkedNumbers[tIdx] ?? <int>{};
       final grid = ticket.ticketData;
       final row0 =
           grid.isNotEmpty ? grid[0].whereType<int>().toList() : <int>[];
@@ -2385,8 +2766,10 @@ class _DrawPageState extends State<DrawPage>
         if (_isQuick10Prize(pName)) continue;
 
         if (pLower.contains('housefull') || pLower.contains('house full')) {
-          final missing =
-              all15.where((n) => !_calledNumbers.contains(n)).toList();
+          final missing = all15
+              .where((n) =>
+                  !(markedSet.contains(n) && _calledNumbers.contains(n)))
+              .toList();
           if (missing.isEmpty && all15.length >= 15) {
             readyList.add(ReadyToClaimAlert(
               prize: prize,
@@ -2395,7 +2778,7 @@ class _DrawPageState extends State<DrawPage>
               ticket: ticket,
               patternType: 'Housefull',
               message:
-                  'All 15 numbers filled for Housefull on SL #${ticket.slNo}!',
+                  'All 15 numbers marked for Housefull on SL #${ticket.slNo}!',
             ));
           } else if (missing.length == 1) {
             final targetNum = missing.first;
@@ -2411,9 +2794,10 @@ class _DrawPageState extends State<DrawPage>
             ));
           }
         } else if (_isQuick5Prize(pName)) {
-          final calledOnTicket =
-              all15.where((n) => _calledNumbers.contains(n)).toList();
-          if (calledOnTicket.length >= 5) {
+          final markedCalledOnTicket = all15
+              .where((n) => markedSet.contains(n) && _calledNumbers.contains(n))
+              .toList();
+          if (markedCalledOnTicket.length >= 5) {
             readyList.add(ReadyToClaimAlert(
               prize: prize,
               ticketIndex: tIdx,
@@ -2421,13 +2805,15 @@ class _DrawPageState extends State<DrawPage>
               ticket: ticket,
               patternType: 'Quick 5',
               message:
-                  '${calledOnTicket.length} numbers marked for Quick 5 on SL #${ticket.slNo}!',
+                  '${markedCalledOnTicket.length} numbers marked for Quick 5 on SL #${ticket.slNo}!',
             ));
-          } else if (calledOnTicket.length == 4) {
-            final uncalled =
-                all15.where((n) => !_calledNumbers.contains(n)).toList();
-            if (uncalled.isNotEmpty) {
-              targetNumbersPerTicket[tIdx]!.addAll(uncalled);
+          } else if (markedCalledOnTicket.length == 4) {
+            final uncalledOrUnmarked = all15
+                .where((n) =>
+                    !(markedSet.contains(n) && _calledNumbers.contains(n)))
+                .toList();
+            if (uncalledOrUnmarked.isNotEmpty) {
+              targetNumbersPerTicket[tIdx]!.addAll(uncalledOrUnmarked);
             }
             nearWinList.add(NearWinAlert(
               prizeName: prize.name,
@@ -2436,14 +2822,16 @@ class _DrawPageState extends State<DrawPage>
               missingNumber: 0,
               patternType: 'Quick 5',
               message:
-                  'Just 1 more called number needed for Quick 5 on SL #${ticket.slNo}!',
+                  'Just 1 more marked number needed for Quick 5 on SL #${ticket.slNo}!',
             ));
           }
         } else if (pLower.contains('1st') ||
             pLower.contains('first') ||
             pLower.contains('top')) {
-          final missing =
-              row0.where((n) => !_calledNumbers.contains(n)).toList();
+          final missing = row0
+              .where((n) =>
+                  !(markedSet.contains(n) && _calledNumbers.contains(n)))
+              .toList();
           if (missing.isEmpty && row0.isNotEmpty) {
             readyList.add(ReadyToClaimAlert(
               prize: prize,
@@ -2452,7 +2840,7 @@ class _DrawPageState extends State<DrawPage>
               ticket: ticket,
               patternType: '1st Line',
               message:
-                  'Row 1 is filled! Ready to claim 1st Line on SL #${ticket.slNo}!',
+                  'Row 1 is marked! Ready to claim 1st Line on SL #${ticket.slNo}!',
             ));
           } else if (missing.length == 1) {
             final targetNum = missing.first;
@@ -2470,8 +2858,10 @@ class _DrawPageState extends State<DrawPage>
         } else if (pLower.contains('2nd') ||
             pLower.contains('second') ||
             pLower.contains('middle')) {
-          final missing =
-              row1.where((n) => !_calledNumbers.contains(n)).toList();
+          final missing = row1
+              .where((n) =>
+                  !(markedSet.contains(n) && _calledNumbers.contains(n)))
+              .toList();
           if (missing.isEmpty && row1.isNotEmpty) {
             readyList.add(ReadyToClaimAlert(
               prize: prize,
@@ -2480,7 +2870,7 @@ class _DrawPageState extends State<DrawPage>
               ticket: ticket,
               patternType: '2nd Line',
               message:
-                  'Row 2 is filled! Ready to claim 2nd Line on SL #${ticket.slNo}!',
+                  'Row 2 is marked! Ready to claim 2nd Line on SL #${ticket.slNo}!',
             ));
           } else if (missing.length == 1) {
             final targetNum = missing.first;
@@ -2498,8 +2888,10 @@ class _DrawPageState extends State<DrawPage>
         } else if (pLower.contains('3rd') ||
             pLower.contains('third') ||
             pLower.contains('bottom')) {
-          final missing =
-              row2.where((n) => !_calledNumbers.contains(n)).toList();
+          final missing = row2
+              .where((n) =>
+                  !(markedSet.contains(n) && _calledNumbers.contains(n)))
+              .toList();
           if (missing.isEmpty && row2.isNotEmpty) {
             readyList.add(ReadyToClaimAlert(
               prize: prize,
@@ -2508,7 +2900,7 @@ class _DrawPageState extends State<DrawPage>
               ticket: ticket,
               patternType: '3rd Line',
               message:
-                  'Row 3 is filled! Ready to claim 3rd Line on SL #${ticket.slNo}!',
+                  'Row 3 is marked! Ready to claim 3rd Line on SL #${ticket.slNo}!',
             ));
           } else if (missing.length == 1) {
             final targetNum = missing.first;
@@ -2524,10 +2916,12 @@ class _DrawPageState extends State<DrawPage>
             ));
           }
         } else if (pLower.contains('corner') || pLower.contains('4th')) {
-          final missing =
-              corners.where((n) => !_calledNumbers.contains(n)).toList();
+          final missing = corners
+              .where((n) =>
+                  !(markedSet.contains(n) && _calledNumbers.contains(n)))
+              .toList();
           if (corners.isNotEmpty) {
-            if (missing.isEmpty) {
+            if (missing.isEmpty && corners.length == 4) {
               readyList.add(ReadyToClaimAlert(
                 prize: prize,
                 ticketIndex: tIdx,
@@ -2535,7 +2929,7 @@ class _DrawPageState extends State<DrawPage>
                 ticket: ticket,
                 patternType: '4 Corners',
                 message:
-                    'All 4 corners filled! Ready to claim 4th Corner on SL #${ticket.slNo}!',
+                    'All 4 corners marked! Ready to claim 4th Corner on SL #${ticket.slNo}!',
               ));
             } else if (missing.length == 1) {
               final targetNum = missing.first;
@@ -2563,26 +2957,24 @@ class _DrawPageState extends State<DrawPage>
   }
 
   void _checkAndSpeakPatternAlerts(PatternAnalysisResult analysis) {
-    if (!_voiceEnabled) return;
+    if (!_voiceEnabled || _userAudioMuted) return;
 
     // Ready to claim has highest voice announcement priority
     if (analysis.readyToClaim.isNotEmpty) {
       final alert = analysis.readyToClaim.first;
       final key = '${alert.slNo}_${alert.prize.name}_ready';
       if (_spokenAlertKeys.add(key)) {
-        Future.delayed(const Duration(milliseconds: 3200), () {
-          if (mounted && _voiceEnabled) {
-            try {
-              if (alert.isMixClaim) {
-                _flutterTts.speak(
-                  '${alert.patternType} completed across mix tickets ${alert.contributingSlNos}! Claim your prize now!',
-                );
-              } else {
-                _flutterTts.speak(
-                  '${alert.patternType} completed on ticket SL ${alert.slNo}! Claim your prize now!',
-                );
-              }
-            } catch (_) {}
+        Future.delayed(const Duration(milliseconds: 1800), () {
+          if (mounted && _voiceEnabled && !_userAudioMuted) {
+            if (alert.isMixClaim) {
+              _safeSpeakTts(
+                '${alert.patternType} completed! Claim automatically submitted!',
+              );
+            } else {
+              _safeSpeakTts(
+                '${alert.patternType} completed on ticket SL ${alert.slNo}! Claim automatically submitted!',
+              );
+            }
           }
         });
         return;
@@ -2595,23 +2987,21 @@ class _DrawPageState extends State<DrawPage>
       final key =
           '${alert.slNo}_${alert.prizeName}_1away_${alert.missingNumber}';
       if (_spokenAlertKeys.add(key)) {
-        Future.delayed(const Duration(milliseconds: 3200), () {
-          if (mounted && _voiceEnabled) {
-            try {
-              if (alert.isMix) {
-                _flutterTts.speak(
-                  'Alert! Only one more number needed for ${alert.prizeName} across mix tickets ${alert.mixTicketsDisplay}!',
-                );
-              } else if (alert.missingNumber > 0) {
-                _flutterTts.speak(
-                  'Alert! Only number ${alert.missingNumber} needed for ${alert.patternType} on ticket SL ${alert.slNo}!',
-                );
-              } else {
-                _flutterTts.speak(
-                  'Alert! Only one more number needed for ${alert.patternType} on ticket SL ${alert.slNo}!',
-                );
-              }
-            } catch (_) {}
+        Future.delayed(const Duration(milliseconds: 2000), () {
+          if (mounted && _voiceEnabled && !_userAudioMuted) {
+            if (alert.isMix) {
+              _safeSpeakTts(
+                'Only one number needed for ${alert.prizeName}!',
+              );
+            } else if (alert.missingNumber > 0) {
+              _safeSpeakTts(
+                'Only number ${alert.missingNumber} needed for ${alert.patternType} on ticket SL ${alert.slNo}!',
+              );
+            } else {
+              _safeSpeakTts(
+                'Only one number needed for ${alert.patternType} on ticket SL ${alert.slNo}!',
+              );
+            }
           }
         });
       }
@@ -2973,6 +3363,12 @@ class _DrawPageState extends State<DrawPage>
                         const SizedBox(height: 12),
                       ],
 
+                      // Pending Claims Verification Banner
+                      if (_pendingUserClaims.isNotEmpty) ...[
+                        _buildPendingVerificationBanner(),
+                        const SizedBox(height: 12),
+                      ],
+
                       // Auto-Suggest Claim Banner (Pulsing high-priority when cells fill)
                       if (readyList.isNotEmpty) ...[
                         _buildAutoSuggestClaimBanner(readyList.first),
@@ -3023,6 +3419,70 @@ class _DrawPageState extends State<DrawPage>
   // ===========================================================================
   // SUB-WIDGETS & SMART ALERTS
   // ===========================================================================
+  Widget _buildPendingVerificationBanner() {
+    final claimsList = _pendingUserClaims.map((k) {
+      final p = _drawTicket?.prizes.firstWhere(
+        (pr) => pr.name.toLowerCase().trim() == k,
+        orElse: () => PrizeItem(name: k.toUpperCase(), price: ''),
+      );
+      return p?.name ?? k.toUpperCase();
+    }).join(', ');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF5E7),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE67E22), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFE67E22).withOpacity(0.12),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+              color: Color(0xFFE67E22),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '⚡ Auto-Claim Sent • Awaiting Host Review',
+                  style: TextStyle(
+                    color: Color(0xFFD35400),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  'Claim for $claimsList submitted automatically. Host is reviewing your ticket.',
+                  style: TextStyle(
+                    color: Colors.brown.shade800,
+                    fontSize: 10.5,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAutoSuggestClaimBanner(ReadyToClaimAlert alert) {
     return ScaleTransition(
       scale: _pulseAnimation,
@@ -3053,7 +3513,7 @@ class _DrawPageState extends State<DrawPage>
                 shape: BoxShape.circle,
               ),
               child: const Icon(
-                Icons.celebration_rounded,
+                Icons.auto_awesome,
                 color: Color(0xFF00B894),
                 size: 24,
               ),
@@ -3074,8 +3534,8 @@ class _DrawPageState extends State<DrawPage>
                         ),
                         child: Text(
                           alert.isMixClaim
-                              ? '⚡ MIX QUICK READY'
-                              : '⚡ READY TO CLAIM',
+                              ? '⚡ MIX QUICK AUTO-CLAIM'
+                              : '⚡ AUTO-CLAIM SUBMITTED',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,
@@ -3114,8 +3574,8 @@ class _DrawPageState extends State<DrawPage>
                   ),
                   Text(
                     alert.isMixClaim
-                        ? '${alert.totalMarkedCount} numbers marked across mix tickets! Tap CLAIM NOW before others!'
-                        : 'All required cells are filled. Tap CLAIM NOW before others!',
+                        ? '${alert.totalMarkedCount} numbers marked! Claim automatically submitted for verification.'
+                        : 'All required cells filled! Claim automatically submitted for verification.',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.9),
                       fontSize: 11,
@@ -3125,24 +3585,33 @@ class _DrawPageState extends State<DrawPage>
               ),
             ),
             const SizedBox(width: 8),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFF39C12),
-                foregroundColor: Colors.white,
-                elevation: 4,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
               ),
-              onPressed: () => _handlePrizeClaim(alert.prize),
-              child: const Text(
-                'CLAIM NOW',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 12,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Color(0xFF00B894),
+                    ),
+                  ),
+                  SizedBox(width: 5),
+                  Text(
+                    'VERIFYING',
+                    style: TextStyle(
+                      color: Color(0xFF00896F),
+                      fontWeight: FontWeight.w900,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -3431,14 +3900,19 @@ class _DrawPageState extends State<DrawPage>
                           ),
                         ),
                         const SizedBox(width: 4.5),
-                        Text(
-                          'LIVE ${_formatLiveDuration(_liveElapsedSeconds)}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                          ),
+                        ValueListenableBuilder<int>(
+                          valueListenable: _liveElapsedSecondsNotifier,
+                          builder: (context, seconds, _) {
+                            return Text(
+                              'LIVE ${_formatLiveDuration(seconds)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.5,
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -3487,6 +3961,49 @@ class _DrawPageState extends State<DrawPage>
                   ),
                 ),
 
+                // Timer Sync Badge in Stream Header
+                if (_isTimerActive || _nextDrawCountdown > 0)
+                  Container(
+                    margin: const EdgeInsets.only(left: 6),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 7, vertical: 3.5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6366F1).withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: _nextDrawCountdown <= 2
+                            ? const Color(0xFFEF4444).withOpacity(0.8)
+                            : const Color(0xFF818CF8).withOpacity(0.5),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.timer_outlined,
+                          size: 11,
+                          color: _nextDrawCountdown <= 2
+                              ? const Color(0xFFEF4444)
+                              : const Color(0xFF818CF8),
+                        ),
+                        const SizedBox(width: 3.5),
+                        Text(
+                          _nextDrawCountdown > 0
+                              ? 'Next: ${_nextDrawCountdown}s'
+                              : 'Drawing...',
+                          style: TextStyle(
+                            color: _nextDrawCountdown <= 2
+                                ? const Color(0xFFEF4444)
+                                : Colors.white,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                 const Spacer(),
 
                 // Audio Mute/Unmute for User (Local stream listening toggle)
@@ -3496,9 +4013,7 @@ class _DrawPageState extends State<DrawPage>
                       _userAudioMuted = !_userAudioMuted;
                     });
                     if (_userAudioMuted) {
-                      try {
-                        _flutterTts.stop();
-                      } catch (_) {}
+                      _safeStopTts();
                     } else if (_currentNumber != null) {
                       _speakAnnouncement(_currentNumber!, _lastAnnouncement);
                     }
@@ -3628,6 +4143,50 @@ class _DrawPageState extends State<DrawPage>
                       ),
                       const SizedBox(width: 6),
 
+                      // Next Draw Countdown Pill on Video HUD
+                      if (_isTimerActive || _nextDrawCountdown > 0) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 9, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F172A).withOpacity(0.92),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: _nextDrawCountdown <= 2
+                                  ? const Color(0xFFEF4444)
+                                  : const Color(0xFF6366F1),
+                              width: 1.2,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.timer_outlined,
+                                size: 13,
+                                color: _nextDrawCountdown <= 2
+                                    ? const Color(0xFFEF4444)
+                                    : const Color(0xFF818CF8),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _nextDrawCountdown > 0
+                                    ? 'Next: ${_nextDrawCountdown}s'
+                                    : 'Drawing...',
+                                style: TextStyle(
+                                  color: _nextDrawCountdown <= 2
+                                      ? const Color(0xFFEF4444)
+                                      : Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+
                       // Slang Announcement Tag with Replay
                       if (_currentNumber != null)
                         Expanded(
@@ -3653,20 +4212,25 @@ class _DrawPageState extends State<DrawPage>
                               ),
                               child: Row(
                                 children: [
-                                  AnimatedBuilder(
-                                    animation: _waveAnimation,
-                                    builder: (context, child) {
-                                      return Transform.scale(
-                                        scale: _isHostSpeaking
-                                            ? _waveAnimation.value
-                                            : 1.0,
-                                        child: Icon(
-                                          _isHostSpeaking
-                                              ? Icons.volume_up_rounded
-                                              : Icons.record_voice_over_rounded,
-                                          color: const Color(0xFFFFD54F),
-                                          size: 14,
-                                        ),
+                                  ValueListenableBuilder<bool>(
+                                    valueListenable: _isHostSpeakingNotifier,
+                                    builder: (context, isSpeaking, _) {
+                                      return AnimatedBuilder(
+                                        animation: _waveAnimation,
+                                        builder: (context, child) {
+                                          return Transform.scale(
+                                            scale: isSpeaking
+                                                ? _waveAnimation.value
+                                                : 1.0,
+                                            child: Icon(
+                                              isSpeaking
+                                                  ? Icons.volume_up_rounded
+                                                  : Icons.record_voice_over_rounded,
+                                              color: const Color(0xFFFFD54F),
+                                              size: 14,
+                                            ),
+                                          );
+                                        },
                                       );
                                     },
                                   ),
@@ -3808,19 +4372,25 @@ class _DrawPageState extends State<DrawPage>
       );
     }
 
-    // 2. If actual camera frame is received from host
-    if (_lastHostCameraFrame != null) {
-      return Image.memory(
-        _lastHostCameraFrame!,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (ctx, err, stack) => _buildStudioBroadcastFallback(),
-      );
-    }
-
-    // 3. Simulated Live Host Studio Broadcast (with animated audio waves)
-    return _buildStudioBroadcastFallback();
+    // 2. High-performance frame listener without triggering full page rebuilds
+    return ValueListenableBuilder<Uint8List?>(
+      valueListenable: _hostCameraFrameNotifier,
+      builder: (context, frameBytes, _) {
+        final bytes = frameBytes ?? _lastHostCameraFrame;
+        if (bytes != null && bytes.isNotEmpty) {
+          return Image.memory(
+            bytes,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.low,
+            errorBuilder: (ctx, err, stack) => _buildStudioBroadcastFallback(),
+          );
+        }
+        return _buildStudioBroadcastFallback();
+      },
+    );
   }
 
   Widget _buildStudioBroadcastFallback() {
@@ -3889,36 +4459,41 @@ class _DrawPageState extends State<DrawPage>
 
             // Real-time Sound Wave Visualizer Bars
             if (_isHostMicActive)
-              AnimatedBuilder(
-                animation: _waveAnimation,
-                builder: (context, child) {
-                  final val = _isHostSpeaking
-                      ? _waveAnimation.value
-                      : (_waveAnimation.value * 0.4);
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildSoundBar(height: 8 + 12 * val, color: const Color(0xFF00B894)),
-                      const SizedBox(width: 3),
-                      _buildSoundBar(height: 6 + 18 * (1.1 - val * 0.6), color: const Color(0xFF00CEC9)),
-                      const SizedBox(width: 3),
-                      _buildSoundBar(height: 10 + 20 * val, color: const Color(0xFFFFD54F)),
-                      const SizedBox(width: 3),
-                      _buildSoundBar(height: 6 + 18 * (1.1 - val * 0.6), color: const Color(0xFF00CEC9)),
-                      const SizedBox(width: 3),
-                      _buildSoundBar(height: 8 + 12 * val, color: const Color(0xFF00B894)),
-                      const SizedBox(width: 6),
-                      Text(
-                        _isHostSpeaking ? '📢 Host Speaking' : '🎙️ Mic Active',
-                        style: TextStyle(
-                          color: _isHostSpeaking
-                              ? const Color(0xFFFFD54F)
-                              : const Color(0xFF00B894),
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
+              ValueListenableBuilder<bool>(
+                valueListenable: _isHostSpeakingNotifier,
+                builder: (context, isSpeaking, _) {
+                  return AnimatedBuilder(
+                    animation: _waveAnimation,
+                    builder: (context, child) {
+                      final val = isSpeaking
+                          ? _waveAnimation.value
+                          : (_waveAnimation.value * 0.4);
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildSoundBar(height: 8 + 12 * val, color: const Color(0xFF00B894)),
+                          const SizedBox(width: 3),
+                          _buildSoundBar(height: 6 + 18 * (1.1 - val * 0.6), color: const Color(0xFF00CEC9)),
+                          const SizedBox(width: 3),
+                          _buildSoundBar(height: 10 + 20 * val, color: const Color(0xFFFFD54F)),
+                          const SizedBox(width: 3),
+                          _buildSoundBar(height: 6 + 18 * (1.1 - val * 0.6), color: const Color(0xFF00CEC9)),
+                          const SizedBox(width: 3),
+                          _buildSoundBar(height: 8 + 12 * val, color: const Color(0xFF00B894)),
+                          const SizedBox(width: 6),
+                          Text(
+                            isSpeaking ? '📢 Host Speaking' : '🎙️ Mic Active',
+                            style: TextStyle(
+                              color: isSpeaking
+                                  ? const Color(0xFFFFD54F)
+                                  : const Color(0xFF00B894),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   );
                 },
               ),
@@ -3992,13 +4567,49 @@ class _DrawPageState extends State<DrawPage>
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              'Called: ${_calledNumbers.length}/90',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-                color: Color(0xFF2C3E50),
-              ),
+            child: Row(
+              children: [
+                Text(
+                  'Called: ${_calledNumbers.length}/90',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: Color(0xFF2C3E50),
+                  ),
+                ),
+                if (_isTimerActive || _nextDrawCountdown > 0) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 2.5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6366F1).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF6366F1).withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.timer_outlined,
+                            size: 12, color: Color(0xFF6366F1)),
+                        const SizedBox(width: 3),
+                        Text(
+                          _nextDrawCountdown > 0
+                              ? '${_nextDrawCountdown}s'
+                              : 'Drawing...',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF6366F1),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           // TTS Audio Mute/Unmute
@@ -4012,9 +4623,7 @@ class _DrawPageState extends State<DrawPage>
             onPressed: () {
               setState(() => _voiceEnabled = !_voiceEnabled);
               if (!_voiceEnabled) {
-                try {
-                  _flutterTts.stop();
-                } catch (_) {}
+                _safeStopTts();
               }
             },
           ),
@@ -4176,6 +4785,39 @@ class _DrawPageState extends State<DrawPage>
                       color: Colors.white70,
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (_isTimerActive || _nextDrawCountdown > 0) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4.5),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.3),
+                  width: 0.8,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.timer_outlined,
+                      color: Colors.amberAccent, size: 14),
+                  const SizedBox(width: 5),
+                  Text(
+                    _nextDrawCountdown > 0
+                        ? 'Next call in ${_nextDrawCountdown}s'
+                        : 'Host drawing next number...',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -4567,12 +5209,12 @@ class _DrawPageState extends State<DrawPage>
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.stars_rounded,
+                    const Icon(Icons.auto_awesome,
                         color: Color(0xFF00B894), size: 16),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        '🎉 READY TO CLAIM: ${readyForThis.map((r) => r.prize.name).join(", ")}!',
+                        '🎉 AUTO-CLAIMED: ${readyForThis.map((r) => r.prize.name).join(", ")}!',
                         style: const TextStyle(
                           color: Color(0xFF00896F),
                           fontWeight: FontWeight.bold,
@@ -4580,22 +5222,19 @@ class _DrawPageState extends State<DrawPage>
                         ),
                       ),
                     ),
-                    InkWell(
-                      onTap: () => _handlePrizeClaim(readyForThis.first.prize),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00B894),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text(
-                          'CLAIM',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10.5,
-                          ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00B894),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'SUBMITTED',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 10.5,
                         ),
                       ),
                     ),
@@ -4967,7 +5606,7 @@ class _DrawPageState extends State<DrawPage>
                     ),
                   ] else if (isPending) ...[
                     const Text(
-                      '⏳ Verifying with Host Admin...',
+                      '⏳ Host Reviewing Claim...',
                       style: TextStyle(
                         fontSize: 10,
                         color: Color(0xFFD35400),
@@ -5000,7 +5639,7 @@ class _DrawPageState extends State<DrawPage>
                             ),
                             SizedBox(width: 6),
                             Text(
-                              'VERIFYING...',
+                              'UNDER REVIEW',
                               style: TextStyle(
                                 fontSize: 10.5,
                                 fontWeight: FontWeight.bold,
@@ -5012,29 +5651,29 @@ class _DrawPageState extends State<DrawPage>
                       ),
                     ),
                   ] else if (isReady) ...[
-                    ScaleTransition(
-                      scale: _pulseAnimation,
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 28,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFF39C12),
-                            elevation: 2,
-                            padding: EdgeInsets.zero,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                    Container(
+                      width: double.infinity,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00B894),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Center(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.auto_awesome,
+                                color: Colors.white, size: 12),
+                            SizedBox(width: 4),
+                            Text(
+                              '⚡ AUTO CLAIMED',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              ),
                             ),
-                          ),
-                          onPressed: () => _handlePrizeClaim(prize),
-                          child: const Text(
-                            '⚡ READY! CLAIM NOW',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                            ),
-                          ),
+                          ],
                         ),
                       ),
                     ),
